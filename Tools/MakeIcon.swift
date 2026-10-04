@@ -1,64 +1,69 @@
 // Renders the 1024×1024 app icon PNG. Usage: swift MakeIcon.swift <output.png>
+// EKIDIO SOUND style (as PADEKI): a bold italic word plus a skewed "EKI" badge, here built from
+// the four stem colours.
 import AppKit
 
-let size = 1024
+let size: CGFloat = 1024
 let output = CommandLine.arguments.dropFirst().first ?? "icon.png"
-
-let rep = NSBitmapImageRep(
-    bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
-    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size), pixelsHigh: Int(size),
+                           bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                           colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+let ctx = NSGraphicsContext.current!.cgContext
 
+func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: a) }
+let pink = rgb(1.0, 0.36, 0.54), orange = rgb(1.0, 0.66, 0.13), green = rgb(0.24, 0.86, 0.59), blue = rgb(0.36, 0.66, 1.0)
+
+// Body: macOS icon grid, 824 pt rounded square.
 let body = NSRect(x: 100, y: 100, width: 824, height: 824)
 let shape = NSBezierPath(roundedRect: body, xRadius: 185, yRadius: 185)
-
-let shadow = NSShadow()
-shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
-shadow.shadowOffset = NSSize(width: 0, height: -12)
-shadow.shadowBlurRadius = 28
+let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+shadow.shadowOffset = NSSize(width: 0, height: -12); shadow.shadowBlurRadius = 28
+NSGraphicsContext.saveGraphicsState(); shadow.set(); NSColor.black.setFill(); shape.fill(); NSGraphicsContext.restoreGraphicsState()
 NSGraphicsContext.saveGraphicsState()
-shadow.set()
-NSColor.black.setFill()
-shape.fill()
+shape.addClip()
+NSGradient(starting: rgb(0.10, 0.10, 0.13), ending: rgb(0.03, 0.03, 0.04))!.draw(in: shape, angle: -90)
+// Soft coloured glow behind the badge.
+let glow = NSGradient(colors: [blue.withAlphaComponent(0.30), pink.withAlphaComponent(0.10), .clear])!
+glow.draw(fromCenter: NSPoint(x: 512, y: 430), radius: 0, toCenter: NSPoint(x: 512, y: 430), radius: 430, options: [])
+// Fine dot grain.
+NSColor.white.withAlphaComponent(0.035).setFill()
+var y: CGFloat = 104
+while y < 920 { var x: CGFloat = 104; while x < 920 { NSBezierPath(ovalIn: NSRect(x: x, y: y, width: 3, height: 3)).fill(); x += 12 }; y += 12 }
 NSGraphicsContext.restoreGraphicsState()
 
-NSGradient(
-    starting: NSColor(srgbRed: 0.09, green: 0.095, blue: 0.12, alpha: 1),
-    ending: NSColor(srgbRed: 0.03, green: 0.03, blue: 0.04, alpha: 1)
-)!.draw(in: shape, angle: -90)
-
-// Four stem waveforms, one per color.
-let colors: [NSColor] = [
-    NSColor(srgbRed: 1.0, green: 0.36, blue: 0.54, alpha: 1),
-    NSColor(srgbRed: 1.0, green: 0.66, blue: 0.13, alpha: 1),
-    NSColor(srgbRed: 0.24, green: 0.86, blue: 0.59, alpha: 1),
-    NSColor(srgbRed: 0.36, green: 0.66, blue: 1.0, alpha: 1),
-]
-let laneTop: CGFloat = 760, laneH: CGFloat = 112
-for (i, c) in colors.enumerated() {
-    let mid = laneTop - CGFloat(i) * (laneH + 22) - laneH / 2
-    c.setFill()
-    var x: CGFloat = 200
-    var k = 0
-    while x < 824 {
-        let phase = Double(k) * 0.37 + Double(i) * 1.7
-        let env = 0.35 + 0.65 * abs(sin(phase) * cos(phase * 0.53 + Double(i)))
-        let h = CGFloat(env) * laneH * (i == 1 ? (k % 6 == 0 ? 1 : 0.35) : 0.9)
-        NSBezierPath(roundedRect: NSRect(x: x, y: mid - h / 2, width: 10, height: h), xRadius: 5, yRadius: 5).fill()
-        x += 16
-        k += 1
-    }
+func italicHeavy(_ s: CGFloat) -> NSFont {
+    let f = NSFont.systemFont(ofSize: s, weight: .black)
+    return NSFontManager.shared.convert(f, toHaveTrait: .italicFontMask)
 }
 
-// Yellow loop frame across the middle.
-let loopRect = NSRect(x: 420, y: 205, width: 236, height: 610)
-NSColor(srgbRed: 1.0, green: 0.84, blue: 0.04, alpha: 0.13).setFill()
-NSBezierPath(roundedRect: loopRect, xRadius: 18, yRadius: 18).fill()
-NSColor(srgbRed: 1.0, green: 0.84, blue: 0.04, alpha: 1).setStroke()
-let frame = NSBezierPath(roundedRect: loopRect, xRadius: 18, yRadius: 18)
-frame.lineWidth = 14
-frame.stroke()
+// "STEM" in white.
+let stem = NSAttributedString(string: "STEM", attributes: [.font: italicHeavy(230), .foregroundColor: NSColor.white, .kern: -6])
+let sz = stem.size()
+stem.draw(at: NSPoint(x: (size - sz.width) / 2 - 8, y: 560))
+
+// The "EKI" badge: a skewed parallelogram of four stem-coloured bands, white offset shadow.
+let bw: CGFloat = 560, bh: CGFloat = 300, bx: CGFloat = (size - bw) / 2 - 6, by: CGFloat = 215
+let skew = CGAffineTransform(a: 1, b: 0, c: 0.25, d: 1, tx: -(by + bh / 2) * 0.25, ty: 0)  // leans right, like the italic type
+func badgePath(_ dx: CGFloat, _ dy: CGFloat) -> CGPath {
+    CGPath(rect: CGRect(x: bx + dx, y: by + dy, width: bw, height: bh), transform: [skew])
+}
+ctx.saveGState(); ctx.addPath(badgePath(22, -22)); ctx.setFillColor(NSColor.white.cgColor); ctx.fillPath(); ctx.restoreGState()
+ctx.saveGState(); ctx.addPath(badgePath(0, 0)); ctx.clip()
+for (i, c) in [pink, orange, green, blue].enumerated() {
+    ctx.setFillColor(c.cgColor)
+    ctx.fill(CGRect(x: 0, y: by + bh - CGFloat(i + 1) * bh / 4, width: size, height: bh / 4 + 0.5))
+}
+// A thin dark seam between the bands, like stems stacked in lanes.
+ctx.setFillColor(NSColor.black.withAlphaComponent(0.18).cgColor)
+for i in 1..<4 { ctx.fill(CGRect(x: 0, y: by + CGFloat(i) * bh / 4 - 2, width: size, height: 4)) }
+ctx.restoreGState()
+
+let eki = NSAttributedString(string: "EKI", attributes: [
+    .font: italicHeavy(250), .foregroundColor: NSColor.white, .kern: -4,
+    .shadow: { let s = NSShadow(); s.shadowColor = NSColor.black.withAlphaComponent(0.35); s.shadowOffset = NSSize(width: 4, height: -6); s.shadowBlurRadius = 8; return s }()])
+let ez = eki.size()
+eki.draw(at: NSPoint(x: bx + (bw - ez.width) / 2 - 10, y: by + (bh - ez.height) / 2 + 6))
 
 NSGraphicsContext.current = nil
 try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: output))

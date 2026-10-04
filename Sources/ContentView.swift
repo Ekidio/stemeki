@@ -6,6 +6,7 @@ struct ContentView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var session: Session
     @State private var dropping = false
+    @State private var splash = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,6 +36,7 @@ struct ContentView: View {
         .background(Theme.bg)
         .foregroundColor(Theme.text)
         .overlay(dropping ? DropOverlay() : nil)
+        .overlay { if splash { SplashView { splash = false } } }
         .onDrop(of: [.fileURL], isTargeted: $dropping) { providers in
             loadURLs(providers) { library.add($0) }
             return true
