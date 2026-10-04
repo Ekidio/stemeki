@@ -5,3 +5,6 @@ versions/
 .DS_Store
 __pycache__/
 demo/
+.vendor/
+.venv/
+.dmg/

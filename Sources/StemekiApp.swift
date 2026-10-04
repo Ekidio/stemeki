@@ -6,6 +6,7 @@ struct StemekiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var library = Library.shared
     @StateObject private var session = Session(library: Library.shared)
+    @StateObject private var updater = Updater.shared
 
     var body: some Scene {
         Window("STEMEKI", id: "main") {
@@ -17,6 +18,10 @@ struct StemekiApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1440, height: 880)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Add Songs…") { library.chooseFiles() }
                     .keyboardShortcut("o")
