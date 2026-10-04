@@ -7,13 +7,14 @@ struct ControlDeck: View {
     @ObservedObject var clock: PlayClock
 
     var body: some View {
+        // The cards share the full width; each grows from its own natural size.
         let row = HStack(alignment: .top, spacing: 10) {
-            TransportCard(clock: clock)
-            GridCard()
-            StemsCard()
-            ExportCard()
+            TransportCard(clock: clock).frame(maxWidth: .infinity)
+            GridCard().frame(maxWidth: .infinity)
+            StemsCard().frame(maxWidth: .infinity)
+            ExportCard().frame(maxWidth: .infinity)
         }
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
         // Scrolls sideways only if the window is narrower than the deck.
         ViewThatFits(in: .horizontal) {
             row
@@ -30,11 +31,11 @@ struct Card<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.system(size: 9.5, weight: .heavy)).tracking(1.2).foregroundColor(accent)
+            Text(title).font(.system(size: 9.5, weight: .heavy)).tracking(1.2).foregroundColor(accent).fixedSize()
             content
         }
         .padding(11)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line))
     }
@@ -62,10 +63,10 @@ struct TransportCard: View {
                 .keyboardShortcut(.space, modifiers: [])
                 .help("Play / pause (space)")
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(formatTime(clock.position)).font(Theme.mono(16, .semibold))
+                    Text(formatTime(clock.position)).font(Theme.mono(16, .semibold)).fixedSize()
                     if let g = library.selected?.grid {
                         let p = g.position(clock.position)
-                        Text("BAR \(p.bar) · \(p.beat)").font(Theme.mono(10.5, .bold)).foregroundColor(Theme.accent)
+                        Text("BAR \(p.bar) · \(p.beat)").font(Theme.mono(10.5, .bold)).foregroundColor(Theme.accent).fixedSize()
                     }
                     HStack(spacing: 4) {
                         Button {
@@ -137,7 +138,7 @@ struct GridCard: View {
                     .help("Back to the detected CUE point and tempo, then AUTO WARP")
             }
             HStack(spacing: 3) {
-                Text("NUDGE").font(.system(size: 9, weight: .heavy)).foregroundColor(Theme.dim)
+                Text("NUDGE").font(.system(size: 9, weight: .heavy)).foregroundColor(Theme.dim).fixedSize()
                 Button { session.nudge(-session.nudgeStep) } label: { Image(systemName: "chevron.left") }
                     .buttonStyle(PillButtonStyle(color: Theme.loop, small: true))
                     .keyboardShortcut("[", modifiers: [])

@@ -40,7 +40,7 @@ struct EditorView: View {
         for l in lanes { if let sg = session.segments(for: l.id) { laneSegs[l.id] = sg } }
         for l in lanes { audible[l.id] = session.isAudible(l) }
         let loopLabel: String? = session.loop.map { l in
-            l.whole ? "FULL SONG · \(l.bars) bars" : "\(l.startBar)–\(l.endBar - 1) · \(l.bars) bars"
+            l.whole ? "FULL SONG · \(l.bars) bars" : "\(l.startBar)–\(l.endBar - 1) · \(l.bars) bar\(l.bars == 1 ? "" : "s")"
         }
         return ZStack {
             TimelineCanvas(lanes: lanes, audible: audible, peaks: player.peaks, mixPeaks: player.mixPeaks, grid: song?.grid,

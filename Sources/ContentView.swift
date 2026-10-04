@@ -92,7 +92,13 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
-            .padding(.bottom, 4)
+            .padding(.bottom, 2)
+            Text("STEM REMIXER")
+                .font(.system(size: 9.5, weight: .heavy)).tracking(3.2)
+                .foregroundColor(Theme.dim)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
             HStack(spacing: 4) {
                 ForEach([Theme.vocals, Theme.drums, Theme.bass, Theme.other], id: \.self) { c in
                     Capsule().fill(c).frame(height: 3)
