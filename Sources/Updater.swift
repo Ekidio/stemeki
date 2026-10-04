@@ -1,7 +1,7 @@
 import Sparkle
 import SwiftUI
 
-/// Self-updates via Sparkle: checks the appcast on GitHub daily and offers new versions.
+/// Self-updates via Sparkle: checks the appcast on GitHub at every launch (and daily while open) and offers new versions.
 /// Updates are verified with the EdDSA key in SUPublicEDKey, so no Apple Developer ID is needed.
 @MainActor
 final class Updater: ObservableObject {
@@ -21,6 +21,12 @@ final class Updater: ObservableObject {
         controller = SPUStandardUpdaterController(startingUpdater: Self.isConfigured,
                                                   updaterDelegate: delegate, userDriverDelegate: nil)
         controller.updater.publisher(for: \.canCheckForUpdates).assign(to: &$canCheckForUpdates)
+        // At every launch, a moment after the splash: a quiet check that only speaks up when there is a new version.
+        guard Self.isConfigured else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+            guard let self, !self.controller.updater.sessionInProgress else { return }
+            self.controller.updater.checkForUpdatesInBackground()
+        }
     }
 
     func checkForUpdates() {
