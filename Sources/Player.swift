@@ -164,6 +164,14 @@ enum Onsets {
                 for k in lo...hi where energy[k] > audible { maxS = max(maxS, energy[k] - energy[k - lagS]) }
                 var at = peak
                 for k in lo...hi where energy[k] > audible && energy[k] - energy[k - lagS] >= maxS * 0.6 { at = k; break }
+                // Back to where the hit becomes audible (~26 dB under its peak), at most 15 ms earlier:
+                // the ear hears the hit from there, so the grid, the click and loop starts belong there.
+                let hitTop = energy[at...min(energy.count - 1, at + 80)].max() ?? energy[at]
+                let startLevel = max(floor, hitTop - 2.6)
+                let back = max(lagS, at - Int(0.015 * sr) / hop)
+                var k = at
+                while k > back && energy[k - 1] > startLevel { k -= 1 }
+                at = k
                 let t = (Double(at - lagS / 2) * Double(hop) + Double(win) / 2) / sr
                 result.append(t)
                 weights.append(peakRise * max(0.05, longE[peak] - floor))

@@ -128,8 +128,8 @@ enum AutoWarp {
         var beats = track(1) + track(-1).dropFirst()
         beats.sort { $0.0 < $1.0 }
 
-        // One marker per bar: the downbeat, when it had its own hit.
-        var pins = beats.filter { Int($0.0.rounded()) % 4 == 0 }
+        // One marker per beat that had its own hit, so the grid (and the click) sit on every hit.
+        var pins = beats
         // Drop markers that disagree with their neighbours (fills, flams, swing).
         var changed = true
         var rounds = 0
