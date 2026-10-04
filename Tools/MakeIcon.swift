@@ -54,6 +54,20 @@ for (i, c) in [pink, orange, green, blue].enumerated() {
     ctx.setFillColor(c.cgColor)
     ctx.fill(CGRect(x: 0, y: by + bh - CGFloat(i + 1) * bh / 4, width: size, height: bh / 4 + 0.5))
 }
+// A little waveform in every band (what a stem looks like).
+for i in 0..<4 {
+    let top = by + bh - CGFloat(i + 1) * bh / 4, mid = top + bh / 8
+    ctx.setFillColor(NSColor.white.withAlphaComponent(0.38).cgColor)
+    var x: CGFloat = -40
+    var k = 0
+    while x < size + 40 {
+        let ph = Double(k) * 0.55 + Double(i) * 1.3
+        let env = 0.25 + 0.75 * abs(sin(ph) * cos(ph * 0.37 + Double(i)))
+        let h = CGFloat(env) * bh / 8 * 0.8
+        ctx.fill(CGRect(x: x, y: mid - h, width: 6, height: h * 2))
+        x += 11; k += 1
+    }
+}
 // A thin dark seam between the bands, like stems stacked in lanes.
 ctx.setFillColor(NSColor.black.withAlphaComponent(0.18).cgColor)
 for i in 1..<4 { ctx.fill(CGRect(x: 0, y: by + CGFloat(i) * bh / 4 - 2, width: size, height: 4)) }

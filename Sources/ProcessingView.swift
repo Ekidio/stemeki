@@ -39,6 +39,7 @@ struct ProcessingView: View {
                                    regions: [], cueGhost: nil, selected: [], clips: [], segs: [:],
                                    viewStart: 0, viewLength: max(preview.duration, 0.1))
                     ScanLine(progress: p, playhead: preview.duration > 0 ? preview.position / preview.duration : nil)
+                    if song.state != .failed { SeparationCore(progress: p, state: song.state) }
                 } else {
                     ProgressView().controlSize(.small)
                 }

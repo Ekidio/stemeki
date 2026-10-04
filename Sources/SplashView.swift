@@ -95,6 +95,19 @@ struct SplashView: View {
             b.concatenate(skew)
             let rect = CGRect(x: 0, y: 0, width: bw, height: bh / 4 + 0.5)
             b.fill(Path(rect), with: .color(colors[i]))
+            // A moving waveform inside the band.
+            var w = b
+            w.clip(to: Path(rect))
+            var wave = Path()
+            let n = 40
+            for k in 0..<n {
+                let u = Double(k) / Double(n)
+                let ph = u * 16 + Double(i) * 1.3 - t * (2.2 + Double(i) * 0.5)
+                let env = 0.25 + 0.75 * abs(sin(ph) * cos(ph * 0.37 + Double(i)))
+                let wh = CGFloat(env) * bh / 8 * 0.85
+                wave.addRect(CGRect(x: CGFloat(u) * bw, y: bh / 8 - wh, width: bw / CGFloat(n) * 0.55, height: wh * 2))
+            }
+            w.fill(wave, with: .color(.white.opacity(0.42)))
             if flash > 0 { b.fill(Path(rect), with: .color(.white.opacity(0.55 * flash))) }
         }
         // "EKI" pops in over the bands.

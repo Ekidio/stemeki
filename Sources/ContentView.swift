@@ -90,44 +90,20 @@ struct DropOverlay: View {
 
 struct SidebarView: View {
     @EnvironmentObject var library: Library
+    @State private var showAbout = false
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                Text("STEM").font(.system(size: 21, weight: .black)).tracking(1.5)
-                Text("EKI").font(.system(size: 21, weight: .black)).tracking(1.5).foregroundColor(Theme.loop)
-                Spacer()
-                Button { NotificationCenter.default.post(name: .showIntro, object: nil) } label: {
-                    Image(systemName: "questionmark").font(.system(size: 12, weight: .bold))
-                        .frame(width: 26, height: 26)
-                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.panel2))
-                }
-                .buttonStyle(.plain)
-                .help("Quick intro")
-                Button { library.chooseFiles() } label: {
-                    Image(systemName: "plus").font(.system(size: 13, weight: .bold))
-                        .frame(width: 28, height: 26)
-                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.panel2))
-                }
-                .buttonStyle(.plain)
-                .help("Add songs (⌘O)")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 2)
+            // The logo, as on the icon and the splash.
+            StemekiLogo(height: 30)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 14).padding(.top, 16).padding(.bottom, 8)
             Text("STEMS · LOOPS · REMIX")
                 .font(.system(size: 9.5, weight: .heavy)).tracking(3.2)
                 .foregroundColor(Theme.dim)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-            HStack(spacing: 4) {
-                ForEach([Theme.vocals, Theme.drums, Theme.bass, Theme.other], id: \.self) { c in
-                    Capsule().fill(c).frame(height: 3)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+                .padding(.bottom, 14)
 
             if let problem = library.pythonProblem {
                 Text(problem).font(.system(size: 11)).foregroundColor(.orange)
@@ -156,8 +132,37 @@ struct SidebarView: View {
             }
 
             Spacer(minLength: 0)
+
+            // Song list tools: add, intro, about.
+            HStack(spacing: 6) {
+                Button { library.chooseFiles() } label: {
+                    HStack(spacing: 5) { Image(systemName: "plus"); Text("ADD SONG") }
+                        .font(.system(size: 11, weight: .heavy))
+                        .frame(maxWidth: .infinity).frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.panel2))
+                }
+                .buttonStyle(.plain)
+                .help("Add songs (⌘O), or drop them on the window")
+                Button { NotificationCenter.default.post(name: .showIntro, object: nil) } label: {
+                    Image(systemName: "questionmark").font(.system(size: 12, weight: .bold))
+                        .frame(width: 32, height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.panel2))
+                }
+                .buttonStyle(.plain)
+                .help("Quick intro")
+                Button { showAbout = true } label: {
+                    Image(systemName: "info").font(.system(size: 12, weight: .bold))
+                        .frame(width: 32, height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.panel2))
+                }
+                .buttonStyle(.plain)
+                .help("About STEMEKI")
+            }
+            .foregroundColor(Theme.text)
+            .padding(12)
         }
         .background(Theme.panel)
+        .sheet(isPresented: $showAbout) { AboutView() }
     }
 }
 
