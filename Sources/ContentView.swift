@@ -8,20 +8,29 @@ struct ContentView: View {
     @State private var dropping = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            SidebarView()
-                .frame(width: 232)
-            Rectangle().fill(Theme.line).frame(width: 1)
-            Group {
-                if let song = library.selected, song.isReady {
-                    EditorView(player: session.player)
-                } else if let song = library.selected {
-                    ProcessingView(song: song)
-                } else {
-                    EmptyStateView()
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                SidebarView()
+                    .frame(width: 232)
+                Rectangle().fill(Theme.line).frame(width: 1)
+                Group {
+                    if let song = library.selected, song.isReady {
+                        EditorView(player: session.player)
+                    } else if let song = library.selected {
+                        ProcessingView(song: song)
+                    } else {
+                        EmptyStateView()
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The control deck runs the full width of the window, under the song list too.
+            if library.selected?.isReady == true {
+                Rectangle().fill(Theme.line).frame(height: 1)
+                ControlDeck(clock: session.player.clock)
+                    .padding(12)
+                    .background(Theme.panel.opacity(0.5))
+            }
         }
         .background(Theme.bg)
         .foregroundColor(Theme.text)
@@ -93,7 +102,7 @@ struct SidebarView: View {
             .padding(.horizontal, 16)
             .padding(.top, 14)
             .padding(.bottom, 2)
-            Text("STEM REMIXER")
+            Text("STEMS · LOOPS · REMIX")
                 .font(.system(size: 9.5, weight: .heavy)).tracking(3.2)
                 .foregroundColor(Theme.dim)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,19 +143,6 @@ struct SidebarView: View {
             }
 
             Spacer(minLength: 0)
-            Button {
-                NSWorkspace.shared.open(library.exportFolder)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                    Text("Export folder").font(.system(size: 11, weight: .medium))
-                    Spacer()
-                }
-                .foregroundColor(Theme.dim)
-                .padding(.horizontal, 16).padding(.vertical, 10)
-            }
-            .buttonStyle(.plain)
-            .onAppear { try? FileManager.default.createDirectory(at: library.loopsDir, withIntermediateDirectories: true) }
         }
         .background(Theme.panel)
     }

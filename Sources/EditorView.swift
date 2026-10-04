@@ -23,8 +23,7 @@ struct EditorView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line))
             .padding(.horizontal, 14)
-            ControlDeck(clock: player.clock)
-                .padding(14)
+            .padding(.bottom, 12)
         }
         .overlay(alignment: .bottom) { ToastView() }
         .background(FollowDriver(clock: player.clock))
@@ -138,6 +137,7 @@ struct Segmented<T: Hashable>: View {
             ForEach(options, id: \.self) { o in
                 Text(label(o))
                     .font(.system(size: 10.5, weight: .bold))
+                    .lineLimit(1).fixedSize()
                     .foregroundColor(o == selection ? .black : Theme.dim)
                     .padding(.horizontal, 10).frame(height: 24)
                     .background(RoundedRectangle(cornerRadius: 5).fill(o == selection ? Theme.text : Color.clear))

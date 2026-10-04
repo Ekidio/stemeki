@@ -8,11 +8,16 @@ struct ControlDeck: View {
 
     var body: some View {
         // The cards share the full width; each grows from its own natural size.
+        // Grid on the left, transport in the very middle, stems and export (the output) on the right.
+        // Both sides get the same width, so the transport stays centred.
         let row = HStack(alignment: .top, spacing: 10) {
-            TransportCard(clock: clock).frame(maxWidth: .infinity)
             GridCard().frame(maxWidth: .infinity)
-            StemsCard().frame(maxWidth: .infinity)
-            ExportCard().frame(maxWidth: .infinity)
+            TransportCard(clock: clock).fixedSize(horizontal: true, vertical: false)
+            HStack(alignment: .top, spacing: 10) {
+                StemsCard().frame(maxWidth: .infinity)
+                ExportCard().frame(maxWidth: .infinity)
+            }
+            .frame(maxWidth: .infinity)
         }
         .fixedSize(horizontal: false, vertical: true)
         // Scrolls sideways only if the window is narrower than the deck.
@@ -279,7 +284,7 @@ struct ToastView: View {
             .padding(.horizontal, 16).padding(.vertical, 11)
             .background(Capsule().fill(Theme.panel2).shadow(color: .black.opacity(0.5), radius: 12, y: 4))
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.08)))
-            .padding(.bottom, 150)
+            .padding(.bottom, 24)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .task(id: t) {
                 try? await Task.sleep(nanoseconds: 7_000_000_000)
