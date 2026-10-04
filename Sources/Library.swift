@@ -103,7 +103,8 @@ final class Library: ObservableObject {
             firstNew = firstNew ?? song.id
         }
         save()
-        if selectedID == nil || selected?.isReady != true { selectedID = firstNew ?? selectedID }
+        // Show the song just added: its waveform and the splitting animation come up right away.
+        if let firstNew { selectedID = firstNew }
         processNext()
     }
 

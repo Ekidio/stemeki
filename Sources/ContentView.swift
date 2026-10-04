@@ -224,34 +224,6 @@ struct EmptyStateView: View {
     }
 }
 
-struct ProcessingView: View {
-    @EnvironmentObject var library: Library
-    let song: Song
-    var body: some View {
-        VStack(spacing: 14) {
-            Text(song.title).font(.system(size: 20, weight: .bold))
-            switch song.state {
-            case .failed:
-                Text(song.error ?? "Error").foregroundColor(.red).font(.system(size: 12)).multilineTextAlignment(.center)
-                    .frame(maxWidth: 520)
-                Button("Retry") { library.retry(song.id) }.buttonStyle(PillButtonStyle(color: Theme.accent, filled: true))
-            default:
-                let p = library.progress[song.id] ?? 0
-                Text(song.state == .queued ? "Queued" : song.state == .separating ? "Separating on the Apple GPU…" : "Beat grid and key…")
-                    .foregroundColor(Theme.dim)
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.08))
-                    Capsule().fill(LinearGradient(colors: [Theme.vocals, Theme.drums, Theme.bass, Theme.other],
-                                                  startPoint: .leading, endPoint: .trailing))
-                        .frame(width: 360 * CGFloat(p))
-                }
-                .frame(width: 360, height: 6)
-                Text("\(Int(p * 100))%").font(Theme.mono(12)).foregroundColor(Theme.dim)
-            }
-        }
-    }
-}
-
 // MARK: - Buttons
 
 struct PillButtonStyle: ButtonStyle {
