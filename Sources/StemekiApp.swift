@@ -25,6 +25,16 @@ struct StemekiApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("Add Songs…") { library.chooseFiles() }
                     .keyboardShortcut("o")
+                Button("Open Project…") { session.openProjectPanel() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+            }
+            CommandGroup(replacing: .saveItem) {
+                Button("Save Project") { session.saveProject() }
+                    .keyboardShortcut("s")
+                    .disabled(library.selected?.isReady != true)
+                Button("Save Project As…") { session.saveProject(saveAs: true) }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                    .disabled(library.selected?.isReady != true)
             }
         }
     }
@@ -75,6 +85,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// The list starts empty at every launch: offer to save unsaved work first.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            let unsaved = Library.shared.unsavedSongs
+            guard !unsaved.isEmpty, let session = Session.current else { return .terminateNow }
+            let a = NSAlert()
+            a.messageText = unsaved.count == 1 ? "Save “\(unsaved[0].title)” before quitting?"
+                                               : "Save \(unsaved.count) songs before quitting?"
+            a.informativeText = "STEMEKI starts with an empty list next time. Unsaved edits, regions and loops will be lost."
+            a.addButton(withTitle: "Save")
+            a.addButton(withTitle: "Don’t Save")
+            a.addButton(withTitle: "Cancel")
+            switch a.runModal() {
+            case .alertFirstButtonReturn:
+                for s in unsaved where !session.saveProject(s.id) { return .terminateCancel }
+                return .terminateNow
+            case .alertSecondButtonReturn: return .terminateNow
+            default: return .terminateCancel
+            }
+        }
+    }
 
     /// Files dropped on the Dock icon or opened with "Open With".
     func application(_ application: NSApplication, open urls: [URL]) {

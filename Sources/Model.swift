@@ -98,6 +98,11 @@ struct Song: Codable, Identifiable, Equatable {
     /// AUTO WARP has run once for this song.
     var autoWarped: Bool?
 
+    /// The project file this song was last saved to / opened from.
+    var projectPath: String?
+    /// Lane levels, mutes and export marks from an opened project (applied when the song opens).
+    var mixer: [String: Session.LaneState]?
+
     // Last loop, so a song reopens where it was left.
     var loopStartBar: Int?
     var loopBars: Int?

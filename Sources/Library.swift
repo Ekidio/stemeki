@@ -135,6 +135,10 @@ final class Library: ObservableObject {
     func add(_ urls: [URL]) {
         var firstNew: UUID?
         for url in urls {
+            if url.pathExtension.lowercased() == Self.projectExtension {
+                do { try openProject(url) } catch { projectAlert("Could not open “\(url.lastPathComponent)”", error) }
+                continue
+            }
             if url.hasDirectoryPath {
                 let items = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
                 add(items.sorted { $0.lastPathComponent < $1.lastPathComponent })
@@ -193,6 +197,100 @@ final class Library: ObservableObject {
     func reanalyze(_ id: UUID) {
         update(id) { $0.state = .queued; $0.error = nil; $0.bpm = nil }
         processNext()
+    }
+
+    // MARK: Projects
+
+    /// A song as it was last saved or opened (encoded), to tell unsaved changes.
+    @Published private(set) var savedState: [UUID: Data] = [:]
+
+    private func fingerprint(_ s: Song) -> Data? {
+        var s = s
+        s.state = .ready; s.error = nil; s.mixer = nil
+        let enc = JSONEncoder(); enc.outputFormatting = .sortedKeys
+        return try? enc.encode(s)
+    }
+
+    /// Changed since it was saved; a never-saved song only once it has edits or regions.
+    func isUnsaved(_ s: Song) -> Bool {
+        guard s.isReady else { return false }
+        if let saved = savedState[s.id] { return fingerprint(s) != saved }
+        return s.clips != nil || !(s.regions ?? []).isEmpty
+    }
+
+    var unsavedSongs: [Song] { songs.filter(isUnsaved) }
+
+    struct ProjectFile: Codable {
+        var format = "STEMEKI project"
+        var version = 1
+        var app: String?
+        var song: Song
+        var mixer: [String: Session.LaneState]
+    }
+
+    static let projectExtension = "stemeki"
+
+    /// Writes "<name>.stemeki": project.json and the stems (cloned on APFS, so it costs almost no space).
+    func saveProject(_ id: UUID, mixer: [String: Session.LaneState], to url: URL) throws {
+        guard var song = songs.first(where: { $0.id == id }), song.isReady else { throw ProjectError("The song is not ready yet.") }
+        let fm = FileManager.default
+        let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).saving")
+        try? fm.removeItem(at: tmp)
+        try fm.createDirectory(at: tmp.appendingPathComponent("Stems"), withIntermediateDirectories: true)
+        for kind in StemKind.separated {
+            try fm.copyItem(at: stemsDir(song).appendingPathComponent(kind.fileName),
+                            to: tmp.appendingPathComponent("Stems").appendingPathComponent(kind.fileName))
+        }
+        song.projectPath = url.path
+        var saved = song
+        saved.mixer = nil
+        let file = ProjectFile(app: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, song: saved, mixer: mixer)
+        let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try enc.encode(file).write(to: tmp.appendingPathComponent("project.json"), options: .atomic)
+        if fm.fileExists(atPath: url.path) { _ = try fm.replaceItemAt(url, withItemAt: tmp) } else { try fm.moveItem(at: tmp, to: url) }
+        update(id) { $0.projectPath = url.path }
+        if let s = songs.first(where: { $0.id == id }) { savedState[id] = fingerprint(s) }
+    }
+
+    /// Opens a project: its stems come back, no separation needed. Returns the song's id.
+    @discardableResult
+    func openProject(_ url: URL) throws -> UUID {
+        let fm = FileManager.default
+        let data = try Data(contentsOf: url.appendingPathComponent("project.json"))
+        let file = try JSONDecoder().decode(ProjectFile.self, from: data)
+        // Already open (from this file): just show it.
+        if let open = songs.first(where: { $0.projectPath == url.path }) {
+            selectedID = open.id
+            return open.id
+        }
+        var song = file.song
+        // Always a new identity: the player must load it fresh, even if this song was open before.
+        song.id = UUID()
+        let dir = stemsDir(song)
+        try? fm.removeItem(at: dir)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        for kind in StemKind.separated {
+            let src = url.appendingPathComponent("Stems").appendingPathComponent(kind.fileName)
+            guard fm.fileExists(atPath: src.path) else { throw ProjectError("The project is missing \(kind.fileName).") }
+            try fm.copyItem(at: src, to: dir.appendingPathComponent(kind.fileName))
+        }
+        song.projectPath = url.path
+        song.state = .ready
+        song.error = nil
+        song.mixer = file.mixer
+        songs.insert(song, at: 0)
+        save()
+        savedState[song.id] = fingerprint(song)
+        selectedID = song.id
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        return song.id
+    }
+
+    /// Opened once: the mixer settings go to the session, then they are no longer needed here.
+    func takeMixer(_ id: UUID) -> [String: Session.LaneState]? {
+        guard let m = songs.first(where: { $0.id == id })?.mixer else { return nil }
+        if let i = songs.firstIndex(where: { $0.id == id }) { songs[i].mixer = nil }
+        return m
     }
 
     func revealStems(_ song: Song) {
@@ -327,6 +425,21 @@ private struct AnalysisResult: Decodable {
     var key: String?
     var camelot: String?
     var error: String?
+}
+
+struct ProjectError: LocalizedError {
+    let message: String
+    init(_ m: String) { message = m }
+    var errorDescription: String? { message }
+}
+
+@MainActor
+func projectAlert(_ title: String, _ error: Error) {
+    let a = NSAlert()
+    a.messageText = title
+    a.informativeText = error.localizedDescription
+    a.alertStyle = .warning
+    a.runModal()
 }
 
 /// Runs the bundled Python scripts with the Demucs-capable interpreter.

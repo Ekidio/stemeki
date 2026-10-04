@@ -92,6 +92,7 @@ struct DropOverlay: View {
 
 struct SidebarView: View {
     @EnvironmentObject var library: Library
+    @EnvironmentObject var session: Session
     @State private var showAbout = false
 
     var body: some View {
@@ -111,10 +112,13 @@ struct SidebarView: View {
                 LazyVStack(spacing: 4) {
                     ForEach(library.songs) { song in
                         SongRow(song: song, selected: song.id == library.selectedID,
-                                progress: library.progress[song.id])
+                                progress: library.progress[song.id], unsaved: library.isUnsaved(song))
                             .onTapGesture { library.selectedID = song.id }
                             .contextMenu {
                                 if song.isReady {
+                                    Button("Save Project") { session.saveProject(song.id) }
+                                    Button("Save Project As…") { session.saveProject(song.id, saveAs: true) }
+                                    Divider()
                                     Button("Show Stems in Finder") { library.revealStems(song) }
                                     Button("Re-analyze (BPM, grid, key)") { library.reanalyze(song.id) }
                                 }
@@ -166,10 +170,19 @@ struct SongRow: View {
     let song: Song
     let selected: Bool
     let progress: Double?
+    var unsaved = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(song.title).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+            HStack(spacing: 6) {
+                Text(song.title).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+                if unsaved {
+                    Circle().fill(Theme.loop).frame(width: 6, height: 6).help("Unsaved changes (⌘S saves the project)")
+                } else if song.projectPath != nil {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundColor(Theme.dim)
+                        .help("Saved: \(song.projectPath ?? "")")
+                }
+            }
             switch song.state {
             case .ready:
                 HStack(spacing: 6) {

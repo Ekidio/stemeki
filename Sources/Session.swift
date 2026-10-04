@@ -1,11 +1,16 @@
 import Foundation
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
+
+extension UTType {
+    static let stemekiProject = UTType(exportedAs: "hu.ekidio.stemeki.project", conformingTo: .package)
+}
 
 /// State of the open song: lanes, mixer, loop, grid edits, zoom and export.
 @MainActor
 final class Session: ObservableObject {
-    struct LaneState {
+    struct LaneState: Codable, Equatable {
         var gain: Float = 1
         var mute = false
         var solo = false
@@ -142,6 +147,8 @@ final class Session: ObservableObject {
         }
         guard player.loadedID != song.id else { return }
         player.load(song: song, dir: library.stemsDir(song))
+        // An opened project brings back its lane levels, mutes and export marks.
+        if let m = library.takeMixer(song.id) { laneStates = m }
         marks = []
         pasteAt = nil
         workMode = .edit
@@ -924,6 +931,57 @@ final class Session: ObservableObject {
         if p < viewStart || p > viewStart + viewLength * 0.92 {
             viewStart = clampView(p - viewLength * 0.08)
         }
+    }
+
+    // MARK: Projects
+
+    private var projectsFolder: URL {
+        if let p = UserDefaults.standard.string(forKey: "projectsFolder"), FileManager.default.fileExists(atPath: p) {
+            return URL(fileURLWithPath: p, isDirectory: true)
+        }
+        let d = library.root.appendingPathComponent("Projects")
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
+    /// ⌘S: saves the song to its project (asks where the first time); ⇧⌘S always asks.
+    /// Returns false when the user cancelled.
+    @discardableResult
+    func saveProject(_ id: UUID? = nil, saveAs: Bool = false) -> Bool {
+        guard let song = library.songs.first(where: { $0.id == (id ?? self.song?.id) }), song.isReady else { return true }
+        var url = song.projectPath.map { URL(fileURLWithPath: $0) }
+        if saveAs || url == nil {
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.stemekiProject]
+            panel.nameFieldStringValue = song.title + "." + Library.projectExtension
+            panel.directoryURL = url?.deletingLastPathComponent() ?? projectsFolder
+            panel.canCreateDirectories = true
+            panel.message = "Save “\(song.title)” with its stems and edits"
+            panel.prompt = "Save"
+            guard panel.runModal() == .OK, let u = panel.url else { return false }
+            url = u
+            UserDefaults.standard.set(u.deletingLastPathComponent().path, forKey: "projectsFolder")
+        }
+        guard let url else { return false }
+        do {
+            try library.saveProject(song.id, mixer: laneStates, to: url)
+            toast = Toast(text: "Saved · \(url.lastPathComponent)", files: [url])
+            return true
+        } catch {
+            projectAlert("Could not save “\(url.lastPathComponent)”", error)
+            return false
+        }
+    }
+
+    /// ⇧⌘O
+    func openProjectPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.stemekiProject]
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = projectsFolder
+        panel.message = "Open STEMEKI projects"
+        guard panel.runModal() == .OK else { return }
+        library.add(panel.urls)
     }
 
     // MARK: Export
