@@ -7,6 +7,8 @@ struct ContentView: View {
     @EnvironmentObject var session: Session
     @State private var dropping = false
     @State private var splash = true
+    @AppStorage("introSeen") private var introSeen = false
+    @State private var showIntro = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,7 +38,9 @@ struct ContentView: View {
         .background(Theme.bg)
         .foregroundColor(Theme.text)
         .overlay(dropping ? DropOverlay() : nil)
-        .overlay { if splash { SplashView { splash = false } } }
+        .overlay { if showIntro { OnboardingView { introSeen = true; withAnimation { showIntro = false } }.transition(.opacity) } }
+        .overlay { if splash { SplashView { splash = false; if !introSeen { withAnimation { showIntro = true } } } } }
+        .onReceive(NotificationCenter.default.publisher(for: .showIntro)) { _ in withAnimation { showIntro = true } }
         .onDrop(of: [.fileURL], isTargeted: $dropping) { providers in
             loadURLs(providers) { library.add($0) }
             return true
@@ -93,6 +97,13 @@ struct SidebarView: View {
                 Text("STEM").font(.system(size: 21, weight: .black)).tracking(1.5)
                 Text("EKI").font(.system(size: 21, weight: .black)).tracking(1.5).foregroundColor(Theme.loop)
                 Spacer()
+                Button { NotificationCenter.default.post(name: .showIntro, object: nil) } label: {
+                    Image(systemName: "questionmark").font(.system(size: 12, weight: .bold))
+                        .frame(width: 26, height: 26)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.panel2))
+                }
+                .buttonStyle(.plain)
+                .help("Quick intro")
                 Button { library.chooseFiles() } label: {
                     Image(systemName: "plus").font(.system(size: 13, weight: .bold))
                         .frame(width: 28, height: 26)
@@ -257,4 +268,8 @@ struct PillButtonStyle: ButtonStyle {
 struct DisabledDim: ViewModifier {
     @Environment(\.isEnabled) var enabled
     func body(content: Content) -> some View { content.opacity(enabled ? 1 : 0.35) }
+}
+
+extension Notification.Name {
+    static let showIntro = Notification.Name("STEMEKIShowIntro")
 }
