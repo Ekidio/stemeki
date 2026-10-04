@@ -663,6 +663,12 @@ final class Session: ObservableObject {
         return d.times[i]
     }
 
+    /// CUE HERE: the CUE jumps to the beat line nearest the playhead.
+    func cueToPlayhead() {
+        guard let g = grid else { return }
+        moveCue(toBeat: g.beat(at: player.position).rounded())
+    }
+
     /// CUE on the beat line nearest to the first full drum hit.
     func autoCue(undoable: Bool = true) {
         guard let g = grid, let t = firstFullDrumHit() else { return }

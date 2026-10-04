@@ -138,6 +138,11 @@ struct GridCard: View {
                     .focused($bpmFocused)
                     .onSubmit { commitBPM() }
                     .help("Export tempo: loops are stretched to exactly this BPM")
+                Button { session.cueToPlayhead() } label: {
+                    HStack(spacing: 3) { Image(systemName: "flag.fill"); Text("CUE HERE") }
+                }
+                .buttonStyle(PillButtonStyle(color: Theme.accent, filled: true, small: true))
+                .help("Put the CUE (bar 1) on the beat at the playhead — also while playing (C). ⌘Z undoes.")
                 Button("×2") { session.scaleBPM(2) }.buttonStyle(PillButtonStyle(small: true))
                 Button("÷2") { session.scaleBPM(0.5) }.buttonStyle(PillButtonStyle(small: true))
                 Button { session.autoWarp() } label: {

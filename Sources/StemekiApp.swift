@@ -35,6 +35,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { Session.current?.clearSelection() }
                 return nil
             }
+            // C (no modifiers): CUE to the playhead.
+            if e.keyCode == 8, e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+               !(NSApp.keyWindow?.firstResponder is NSTextView) {
+                MainActor.assumeIsolated { Session.current?.cueToPlayhead() }
+                return nil
+            }
             // D (no modifiers): duplicate the selected piece / region.
             if e.keyCode == 2, e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                !(NSApp.keyWindow?.firstResponder is NSTextView) {
