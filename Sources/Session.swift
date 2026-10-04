@@ -461,6 +461,13 @@ final class Session: ObservableObject {
         return (newC, newR)
     }
 
+    /// Esc: nothing selected, no edit selection left on the lanes.
+    func clearSelection() {
+        selected = []
+        marks = []
+        cueGhost = nil
+    }
+
     func selectAll() { selected = Set(regions.map(\.id) + clips.filter { _ in true }.map(\.id)) }
 
     func clearRegions() {

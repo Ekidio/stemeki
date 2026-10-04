@@ -30,6 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.appearance = NSAppearance(named: .darkAqua)
         // Enter / Return: playhead to the very start (not while typing in a text field).
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+            // Esc anywhere (except while typing): clear the selection.
+            if e.keyCode == 53, !(NSApp.keyWindow?.firstResponder is NSTextView) {
+                MainActor.assumeIsolated { Session.current?.clearSelection() }
+                return nil
+            }
             guard e.keyCode == 36 || e.keyCode == 76,
                   e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   !(NSApp.keyWindow?.firstResponder is NSTextView) else { return e }

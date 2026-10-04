@@ -365,7 +365,7 @@ final class TimelineNSView: NSView {
         case 123: c.session.shiftLoop(-1)
         case 124: c.session.shiftLoop(1)
         case 51, 117: c.deleteSelection()
-        case 53: c.session.selected = []
+        case 53: c.session.clearSelection()
         case 14:   // E: EDIT / EXPORT
             c.session.workMode = c.session.workMode == .edit ? .export : .edit
         default: super.keyDown(with: e)
