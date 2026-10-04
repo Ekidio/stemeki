@@ -16,8 +16,8 @@ A STEMEKI egy **EKIDIO SOUND** alkalmazás. Lásd még: [PADEKI](https://github.
 
 A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen indul:
 
-- **Ütemrács a dobból.** A tempót és az ütemkezdeteket a leválasztott dobsávból méri, minden beatet a valódi ütéséhez rögzít (AUTO WARP). Így a rács, a metronóm és minden vágás az ütések hallható kezdetén ül, akkor is, ha a tempó csúszik.
-- **CUE = 1. ütem.** A CUE az AUTO WARP legelső markerére kerül, és onnan fut újra az AUTO WARP. A lejátszófejnél a **C**-vel (lejátszás közben is) vagy a zászló húzásával bármelyik beatet „egyessé” teheted.
+- **Ütemrács a dobból.** A tempót és az ütemkezdeteket a leválasztott dobsávból méri, minden beatet a valódi ütéséhez rögzít (AUTO WARP), szakaszonként. Így a rács, a metronóm és minden vágás az ütések hallható kezdetén ül, akkor is, ha a dal részei kicsit eltérő tempóval szólnak.
+- **CUE = 1. ütem.** A CUE az AUTO WARP első, valódi dobütésen ülő markerére kerül. A lejátszófejnél a **C**-vel (lejátszás közben is) vagy a zászló húzásával bármelyik beatet „egyessé” teheted.
 - **Átrajzolod a dalt.** **EDIT** módban kijelölsz, kattintással vágsz, **D**-vel duplikálsz, mozgatod a darabokat, rövidíted a széleiket. A lerakott darab felülírja, amit takar, mint egy DAW-ban.
 - **A szerkezetet exportálod, nem csak a dalt.** **EXPORT** módban régiókat rajzolsz a sávokra, és mindegyik külön loopként mentődik.
 
