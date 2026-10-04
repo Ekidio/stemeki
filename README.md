@@ -16,8 +16,8 @@ STEMEKI is an **EKIDIO SOUND** app. See also: [PADEKI](https://github.com/Ekidio
 
 Most stem splitters stop at "here are four files". STEMEKI goes on:
 
-- **Beat grid from the drums.** The tempo and the downbeats come from the separated drum stem, every beat is pinned to its real hit (AUTO WARP), section by section, so the grid, the metronome and every cut sit on the audible start of the hits – even when the parts of a song run at slightly different tempos.
-- **CUE = bar 1.** The CUE lands on the first real drum hit AUTO WARP pins. Press **C** at the playhead (also while playing) or drag the flag to make any beat the "one".
+- **Smart Tempo.** A trained beat model (Beat This!) listens to the whole mix and finds every beat and the 1, like DJ apps and Logic do. Each beat is moved onto its real attack, and wherever the song keeps one tempo the grid is one perfectly straight line on a round BPM; where it really speeds up or slows down, the grid follows section by section.
+- **CUE = bar 1.** The CUE lands on the song's first downbeat. Press **C** at the playhead (also while playing) or drag the flag to make any beat the "one".
 - **Rebuild the song.** In **EDIT** mode drag a selection, click to cut, **D** to duplicate, drag pieces around, trim their edges. Pieces overwrite what they cover, like in a DAW.
 - **Export the structure, not only the song.** Draw **regions** on the lanes in **EXPORT** mode and save each one as its own loop.
 
