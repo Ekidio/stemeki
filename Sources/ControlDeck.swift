@@ -239,7 +239,7 @@ struct ExportCard: View {
                     .help("SELECTED MIX: FULL, FROM CUE and LOOP put the marked lanes into one file (\(lanes.isEmpty ? "none marked" : lanes)), following the faders.")
             }
             HStack(spacing: 3) {
-                kindButton(.loop, session.loop.map { "LOOP \($0.startBar)–\($0.endBar - 1)" } ?? "LOOP", "repeat",
+                kindButton(.loop, session.loop.map { l in l.isBars ? "LOOP \(l.startBar)–\(l.endBar - 1)" : "LOOP " + (session.grid?.rangeLabel(l.start, l.end) ?? "") } ?? "LOOP", "repeat",
                            "Every marked lane cut to the loop, bar-exact, on the export tempo, as loops (⌘E).")
                     .keyboardShortcut("e", modifiers: .command)
                 kindButton(.regions, "REGIONS \(session.regionsToExport.count)", "square.stack.3d.down.forward.fill",

@@ -23,7 +23,22 @@ final class Session: ObservableObject {
         }
     }
     @Published var laneStates: [String: LaneState] = [:] { didSet { applyGains() } }
-    @Published var loop: LoopSelection? { didSet { loopChanged() } }
+    @Published var loop: LoopSelection? {
+        didSet {
+            // Set by hand: the loop no longer follows the pieces / regions it was made from (U).
+            if !followingLoop { loopFollows = [] }
+            loopChanged()
+        }
+    }
+    /// U: the loop follows these regions / pieces (their start and end) until it is set otherwise.
+    @Published private(set) var loopFollows: Set<UUID> = []
+    private var followingLoop = false
+    /// ⌘C: what was copied (pieces or regions, with their lanes and positions).
+    private var clipboardClips: [Clip] = []
+    private var clipboardRegions: [Region] = []
+    private var clipboardIsEdit = true
+    /// ⌘V goes here (ticks): set by a click on an empty spot of a lane. nil = the playhead.
+    @Published var pasteAt: Int?
     @Published var loopEnabled = true { didSet { loopChanged() } }
     /// NUDGE step in beats (½ beat, 1 beat, ½ bar, 1 bar).
     @Published var nudgeStep: Double = 0.5 { didSet { UserDefaults.standard.set(nudgeStep, forKey: "nudgeStep") } }
@@ -34,7 +49,7 @@ final class Session: ObservableObject {
     enum WorkMode: String { case edit, export }
     @Published var workMode: WorkMode = .edit { didSet { selected = []; cueGhost = nil } }
     /// Edit selections (ranges to cut). Not saved and never exported.
-    @Published var marks: [Region] = []
+    @Published var marks: [Region] = [] { didSet { followLoop() } }
 
     private var activeRegionList: [Region] { workMode == .edit ? marks : allRegions }
     private func storeActive(_ l: [Region]) { if workMode == .edit { marks = l } else { storeRegions(l) } }
@@ -97,7 +112,10 @@ final class Session: ObservableObject {
     var song: Song? { library.selected }
     var grid: Grid? { song?.grid }
     var lanes: [Lane] { Lane.lanes(for: mode) }
-    var duration: Double { player.duration > 0 ? player.duration : (song?.duration ?? 0) }
+    /// The timeline: the song, or longer when pieces were moved past its end.
+    var duration: Double { player.length > 0 ? player.length : (song?.duration ?? 0) }
+    /// The song itself (FULL export).
+    var songDuration: Double { player.duration > 0 ? player.duration : (song?.duration ?? 0) }
 
     func state(_ lane: Lane) -> LaneState { laneStates[lane.id] ?? LaneState() }
 
@@ -125,10 +143,13 @@ final class Session: ObservableObject {
         guard player.loadedID != song.id else { return }
         player.load(song: song, dir: library.stemsDir(song))
         marks = []
+        pasteAt = nil
         workMode = .edit
         // Every song starts as one waveform (MIX); stems come in when asked for.
         mode = song.viewMode ?? .mix
-        if let start = song.loopStartBar, let bars = song.loopBars {
+        if let start = song.loopStartTick, let len = song.loopLenTick {
+            loop = LoopSelection(start: start, len: len, whole: song.loopWhole ?? false)
+        } else if let start = song.loopStartBar, let bars = song.loopBars {
             loop = LoopSelection(startBar: start, bars: bars, whole: song.loopWhole ?? false)
         } else {
             loop = nil
@@ -173,9 +194,7 @@ final class Session: ObservableObject {
 
     var loopRange: ClosedRange<Double>? {
         guard let loop, let g = grid else { return nil }
-        let s = g.barStart(loop.startBar)
-        let e = g.barStart(loop.endBar)
-        return s...e
+        return g.tickTime(loop.start)...g.tickTime(loop.end)
     }
 
     /// Tempo the loops are exported at: the chosen target, else the song's tempo rounded.
@@ -198,15 +217,24 @@ final class Session: ObservableObject {
             s.loopStartBar = l?.startBar
             s.loopBars = l?.bars
             s.loopWhole = l?.whole
+            s.loopStartTick = l?.start
+            s.loopLenTick = l?.len
         }
     }
 
     func clampLoop(_ l: LoopSelection) -> LoopSelection? {
         guard let g = grid, g.fullBars > 0 else { return nil }
+        let lo = g.fullStartT, hi = timelineEndT
         var l = l
-        l.bars = max(1, min(l.bars, g.fullBars))
-        l.startBar = max(g.firstFullBar, min(l.startBar, g.lastFullBar - l.bars + 1))
+        l.len = max(1, min(l.len, hi - lo))
+        l.start = max(lo, min(l.start, hi - l.len))
         return l
+    }
+
+    /// End of the timeline in ticks: the last full bar, or the end of a piece moved past it.
+    var timelineEndT: Int {
+        guard let g = grid else { return 0 }
+        return max(g.fullEndT, allClips.map(\.end).max() ?? 0)
     }
 
     func setLoopLength(_ bars: Int) {
@@ -225,15 +253,49 @@ final class Session: ObservableObject {
 
     func shiftLoop(_ dir: Int) {
         guard let l = loop, !l.whole else { return }
-        if let n = clampLoop(LoopSelection(startBar: l.startBar + dir * l.bars, bars: l.bars)) {
+        if let n = clampLoop(LoopSelection(start: l.start + dir * l.len, len: l.len)) {
             loop = n
             if let r = loopRange { player.seek(max(0, r.lowerBound)) }
         }
         revealLoop()
     }
 
-    func halveLoop() { if let l = loop, l.bars > 1, !l.whole { loop = clampLoop(LoopSelection(startBar: l.startBar, bars: l.bars / 2)) } }
-    func doubleLoop() { if let l = loop, !l.whole { loop = clampLoop(LoopSelection(startBar: l.startBar, bars: l.bars * 2)) } }
+    func halveLoop() { if let l = loop, l.len > 1, !l.whole { loop = clampLoop(LoopSelection(start: l.start, len: l.len / 2)) } }
+    func doubleLoop() { if let l = loop, !l.whole { loop = clampLoop(LoopSelection(start: l.start, len: l.len * 2)) } }
+
+    /// U: the loop takes the start and end of the selection (regions, edit selections or pieces) and follows them.
+    func loopToSelection() {
+        let ids = selected
+        guard let span = span(of: ids) else { return }
+        followingLoop = true
+        loop = clampLoop(LoopSelection(start: span.0, len: span.1 - span.0))
+        followingLoop = false
+        loopFollows = ids
+        loopEnabled = true
+        if let r = loopRange, !player.isPlaying || !r.contains(player.position) { player.seek(max(0, r.lowerBound)) }
+    }
+
+    /// Start and end (ticks) of these regions / edit selections / pieces together.
+    private func span(of ids: Set<UUID>) -> (Int, Int)? {
+        let rs = (allRegions + marks).filter { ids.contains($0.id) }
+        let cs = allClips.filter { ids.contains($0.id) }
+        let starts = rs.map(\.start) + cs.map(\.start), ends = rs.map(\.end) + cs.map(\.end)
+        guard let lo = starts.min(), let hi = ends.max(), hi > lo else { return nil }
+        return (lo, hi)
+    }
+
+    /// Keeps a followed loop on its regions / pieces after they were moved, trimmed or cut.
+    private func followLoop() {
+        guard !loopFollows.isEmpty else { return }
+        guard let s = span(of: loopFollows), let n = clampLoop(LoopSelection(start: s.0, len: s.1 - s.0)) else {
+            loopFollows = []
+            return
+        }
+        guard n != loop else { return }
+        followingLoop = true
+        loop = n
+        followingLoop = false
+    }
 
     /// Loop from a drag between two times, snapped outward to bar lines.
     func loopFromDrag(_ a: Double, _ b: Double) {
@@ -262,12 +324,14 @@ final class Session: ObservableObject {
     private func storeRegions(_ list: [Region]) {
         guard let id = song?.id else { return }
         library.update(id) { $0.regions = list }
+        followLoop()
     }
 
     private func storeClips(_ list: [Clip]) {
         guard let id = song?.id else { return }
         library.update(id) { $0.clips = list.isEmpty ? nil : list }
         syncArrangement()
+        followLoop()
     }
 
     /// Call before a change the user may want to undo.
@@ -325,7 +389,8 @@ final class Session: ObservableObject {
     private func clipsWithLane(_ laneId: String, _ list: [Clip]) -> [Clip] {
         guard let g = grid, !list.contains(where: { $0.laneId == laneId }) else { return list }
         // From the pickup bar before bar 1 to past the last full bar.
-        return list + [Clip(laneId: laneId, start: g.fullStart - 4, src: g.fullStart - 4, len: g.fullEnd - g.fullStart + 8)]
+        return list + [Clip(laneId: laneId, start: g.fullStartT - ticksPerBar, src: g.fullStartT - ticksPerBar,
+                            len: g.fullEndT - g.fullStartT + 2 * ticksPerBar)]
     }
 
     /// Clicking inside a region: cut the lane's audio at its start and end. The piece between is selected.
@@ -351,18 +416,24 @@ final class Session: ObservableObject {
             }
         }
         list = out
+        // A loop that followed this selection now follows the piece cut from it.
+        if loopFollows.contains(rid) { loopFollows.remove(rid); loopFollows.formUnion(inside) }
         storeClips(list)
         storeActive(activeRegionList.filter { $0.id != rid })
         selected = Set(inside)
     }
 
-    /// Moves clips from their `base` state by whole beats (same lane).
-    func moveClips(_ base: [Clip], beats: Int) {
+    /// How far past the song pieces may go (ticks): room for a longer mix.
+    private var maxEndT: Int { (grid?.fullEndT ?? 0) + 512 * ticksPerBar }
+
+    /// Moves clips from their `base` state by whole ticks (same lane). Past the end of the song is fine:
+    /// the timeline grows with them.
+    func moveClips(_ base: [Clip], ticks: Int) {
         guard let g = grid else { return }
         var list = allClips
         for c in base {
             guard let i = list.firstIndex(where: { $0.id == c.id }) else { continue }
-            list[i].start = max(g.fullStart - 4, min(c.start + beats, g.fullEnd + 4))
+            list[i].start = max(g.fullStartT - ticksPerBar, min(c.start + ticks, maxEndT - c.len))
         }
         if list != allClips { storeClips(list) }
     }
@@ -381,11 +452,12 @@ final class Session: ObservableObject {
         return allRegions.filter { ids.contains($0.laneId) }
     }
 
-    /// Keeps a beat range inside the full bars of the song.
+    /// Keeps a tick range from bar 1 of the song to the end of the timeline (pieces may lie past the song).
     private func clampSpan(_ start: Int, _ len: Int) -> (Int, Int)? {
         guard let g = grid, g.fullBars > 0 else { return nil }
-        let n = max(1, min(len, g.fullEnd - g.fullStart))
-        return (max(g.fullStart, min(start, g.fullEnd - n)), n)
+        let hi = max(timelineEndT, g.fullEndT)
+        let n = max(1, min(len, hi - g.fullStartT))
+        return (max(g.fullStartT, min(start, hi - n)), n)
     }
 
     @discardableResult
@@ -409,13 +481,13 @@ final class Session: ObservableObject {
         storeActive(list)
     }
 
-    /// Moves regions from their `base` state by whole beats and lanes (lane index within the lanes on screen).
-    func moveRegions(_ base: [Region], beats: Int, lanes laneDelta: Int) {
+    /// Moves regions from their `base` state by whole ticks and lanes (lane index within the lanes on screen).
+    func moveRegions(_ base: [Region], ticks: Int, lanes laneDelta: Int) {
         let ls = lanes
         var list = activeRegionList
         for r in base {
             guard let i = list.firstIndex(where: { $0.id == r.id }) else { continue }
-            if let (s, n) = clampSpan(r.start + beats, r.len) { list[i].start = s; list[i].len = n }
+            if let (s, n) = clampSpan(r.start + ticks, r.len) { list[i].start = s; list[i].len = n }
             if let li = ls.firstIndex(where: { $0.id == r.laneId }) {
                 list[i].laneId = ls[max(0, min(ls.count - 1, li + laneDelta))].id
             }
@@ -471,7 +543,7 @@ final class Session: ObservableObject {
         var list = allClips
         guard let i = list.firstIndex(where: { $0.id == base.id }) else { return }
         var c = base
-        let songLo = g.fullStart - 4, songHi = g.fullEnd + 4
+        let songLo = g.fullStartT - ticksPerBar, songHi = g.fullEndT + ticksPerBar
         if let s = start {
             var ns = min(s, base.end - 1)
             ns = max(ns, base.start - (base.src - songLo))      // cannot reveal audio before the song
@@ -494,6 +566,76 @@ final class Session: ObservableObject {
     func resolveOverlaps(_ ids: Set<UUID>) {
         let out = allClips.overwritten(by: ids)
         if out != allClips { storeClips(out) }
+    }
+
+    // MARK: Copy and paste
+
+    /// The audio a lane plays in [start, end) as pieces (an unedited lane plays the song as it is).
+    private func pieces(lane laneId: String, _ start: Int, _ end: Int) -> [Clip] {
+        let segs = segments(for: laneId) ?? [Seg(tl: start, src: start, len: end - start)]
+        return segs.compactMap { s in
+            let a = max(s.tl, start), b = min(s.tl + s.len, end)
+            guard b > a else { return nil }
+            return Clip(laneId: laneId, start: a, src: s.src + (a - s.tl), len: b - a)
+        }
+    }
+
+    /// ⌘C: EDIT copies the selected pieces (or the audio under the selected edit selections),
+    /// EXPORT copies the selected regions.
+    func copySelection() {
+        if workMode == .edit {
+            var list = clips.filter { selected.contains($0.id) }
+            for m in marks where selected.contains(m.id) { list += pieces(lane: m.laneId, m.start, m.end) }
+            guard !list.isEmpty else { return }
+            clipboardClips = list
+            clipboardIsEdit = true
+            toast = Toast(text: "Copied · click where it goes, then ⌘V", files: [])
+        } else {
+            let list = regions.filter { selected.contains($0.id) }
+            guard !list.isEmpty else { return }
+            clipboardRegions = list
+            clipboardIsEdit = false
+            toast = Toast(text: "\(list.count) region\(list.count == 1 ? "" : "s") copied · click where it goes, then ⌘V", files: [])
+        }
+    }
+
+    var canPaste: Bool { workMode == .edit ? !clipboardClips.isEmpty : !clipboardRegions.isEmpty }
+
+    /// ⌘V: the copy goes to the paste point (or the beat at the playhead), on the lanes it came from,
+    /// overwriting what is there. The paste point moves to its end, so ⌘V again lines up the next copy.
+    func paste() {
+        guard let g = grid, canPaste else { return }
+        let ids = Set(lanes.map(\.id))
+        let at = pasteAt ?? Int((g.tick(at: player.position) / Double(ticksPerBeat)).rounded()) * ticksPerBeat
+        if workMode == .edit {
+            let src = clipboardClips.filter { ids.contains($0.laneId) }
+            guard let lo = src.map(\.start).min(), let hi = src.map(\.end).max() else {
+                toast = Toast(text: "The copied lanes are not on screen", files: [], isError: true)
+                return
+            }
+            let shift = at - lo
+            checkpoint()
+            var list = allClips
+            for laneId in Set(src.map(\.laneId)) { list = clipsWithLane(laneId, list) }
+            let new = src.map { c -> Clip in
+                var n = c; n.id = UUID(); n.start = min(c.start + shift, maxEndT - c.len); return n
+            }
+            storeClips(list + new)
+            resolveOverlaps(Set(new.map(\.id)))
+            selected = Set(new.map(\.id))
+            pasteAt = at + (hi - lo)
+        } else {
+            let src = clipboardRegions.filter { ids.contains($0.laneId) }
+            guard let lo = src.map(\.start).min(), let hi = src.map(\.end).max() else { return }
+            checkpoint()
+            let new = src.compactMap { r -> Region? in
+                guard let (s, n) = clampSpan(r.start + at - lo, r.len) else { return nil }
+                var nr = r; nr.id = UUID(); nr.start = s; nr.len = n; return nr
+            }
+            storeActive(activeRegionList + new)
+            selected = Set(new.map(\.id))
+            pasteAt = at + (hi - lo)
+        }
     }
 
     /// D: duplicate what is selected. In EDIT an uncut selection is cut first, then its piece is copied.
@@ -533,6 +675,7 @@ final class Session: ObservableObject {
         selected = []
         marks = []
         cueGhost = nil
+        pasteAt = nil
     }
 
     func selectAll() { selected = Set(regions.map(\.id) + clips.filter { _ in true }.map(\.id)) }
@@ -639,7 +782,7 @@ final class Session: ObservableObject {
         autoCue(undoable: false)
     }
 
-    /// Runs AUTO WARP once per song, as soon as the hits are known, then puts the CUE on the first full drum hit.
+    /// Runs AUTO WARP once per song, as soon as the hits are known, then puts the CUE on the first warp marker.
     func autoWarpIfNeeded() {
         guard let s = song, s.isReady, !player.hits.isEmpty, player.loadedID == s.id else { return }
         if s.autoWarped != true {
@@ -669,9 +812,16 @@ final class Session: ObservableObject {
         moveCue(toBeat: g.beat(at: player.position).rounded())
     }
 
-    /// CUE on the beat line nearest to the first full drum hit.
+    /// CUE on the very first warp marker (the first hit AUTO WARP pinned), then AUTO WARP again from there.
+    /// Without markers: the beat line nearest to the first full drum hit.
     func autoCue(undoable: Bool = true) {
-        guard let g = grid, let t = firstFullDrumHit() else { return }
+        guard let g = grid else { return }
+        if g.points.count > 1, let first = g.points.min(by: { $0.beat < $1.beat }) {
+            if abs(first.beat) > 1e-9 { moveCue(toBeat: first.beat, undoable: undoable) }
+            autoWarp()
+            return
+        }
+        guard let t = firstFullDrumHit() else { return }
         moveCue(toBeat: g.beat(at: t).rounded(), undoable: undoable)
     }
 
@@ -681,15 +831,19 @@ final class Session: ObservableObject {
         guard let g = grid, abs(k) > 1e-9 else { return }
         if undoable { checkpoint() }
         setMap(g.points.map { BeatPoint(beat: $0.beat - k, time: $0.time) })
-        let ki = Int(k.rounded())
-        if abs(k - Double(ki)) < 1e-9, ki != 0 {
+        let kt = k * Double(ticksPerBeat), ki = Int(kt.rounded())
+        if abs(kt - Double(ki)) < 1e-9, ki != 0 {
             if !allRegions.isEmpty { storeRegions(allRegions.map { var r = $0; r.start -= ki; return r }) }
             marks = marks.map { var r = $0; r.start -= ki; return r }
             if !allClips.isEmpty { storeClips(allClips.map { var c = $0; c.start -= ki; c.src -= ki; return c }) }
+            if let p = pasteAt { pasteAt = p - ki }
         }
         if var l = loop {
-            l.startBar -= Int((k / 4).rounded())
+            // The loop stays on the same music.
+            l.start -= ki
+            followingLoop = !loopFollows.isEmpty
             loop = l
+            followingLoop = false
         }
     }
 
@@ -700,8 +854,9 @@ final class Session: ObservableObject {
     func zoom(by factor: Double, around t: Double) {
         let d = duration
         guard d > 0 else { return }
-        let minLen = (grid?.beat ?? 0.5) * 2
-        let newLen = min(d, max(minLen, viewLength * factor))
+        // Close enough to see the sixteenths (one beat across the timeline).
+        let minLen = grid?.beat ?? 0.5
+        let newLen = min(d + preRoll + postRoll, max(minLen, viewLength * factor))
         let rel = (t - viewStart) / viewLength
         viewLength = newLen
         viewStart = clampView(t - rel * newLen)
@@ -738,8 +893,11 @@ final class Session: ObservableObject {
     /// Empty space allowed before the song starts (one bar: bar 0), so the start is never squeezed.
     var preRoll: Double { grid?.bar ?? 2 }
 
+    /// Empty space after the end, so pieces can be dragged past the song (a longer mix).
+    var postRoll: Double { (grid?.bar ?? 2) * 8 }
+
     func clampView(_ s: Double) -> Double {
-        max(-preRoll, min(s, max(-preRoll, duration - viewLength + preRoll)))
+        max(-preRoll, min(s, max(-preRoll, duration - viewLength + postRoll)))
     }
 
     func zoomToFit() {
@@ -838,12 +996,13 @@ final class Session: ObservableObject {
         switch kind {
         case .full:
             // As it is: the whole file, original tempo, no edits.
-            let b0 = g.beat(at: 0), b1 = g.beat(at: duration)
+            let b0 = g.beat(at: 0), b1 = g.beat(at: songDuration)
             jobs = [job(outputs(name: { "\(title)_\($0)_FULL" }, edited: false),
                         beatStart: b0, beats: b1 - b0, stretch: false, acid: nil, folder: folder)]
             summary = "full stems"
         case .cue:
-            // From bar 1 to the very end, on the export tempo, so stems line up from the CUE in any DAW.
+            // From bar 1 to the very end (pieces moved past the song included), on the export tempo,
+            // so stems line up from the CUE in any DAW.
             let b1 = g.beat(at: duration)
             jobs = [job(outputs(name: { "\(title)_\($0)_\(bpm)_CUE" }, edited: true),
                         beatStart: 0, beats: b1, stretch: true,
@@ -851,11 +1010,12 @@ final class Session: ObservableObject {
             summary = "stems from the CUE"
         case .loop:
             guard let l = loop else { return }
-            let name = "LOOP_\(l.startBar)_\(l.endBar - 1)"
+            let name = "LOOP_" + g.rangeLabel(l.start, l.end).replacingOccurrences(of: "–", with: "_")
+            let beats = Double(l.len) / Double(ticksPerBeat)
             jobs = [job(outputs(name: { "\(title)_\($0)_\(bpm)_\(name)" }, edited: true),
-                        beatStart: g.barBeat(l.startBar), beats: Double(l.bars * 4), stretch: true,
-                        acid: .init(tempo: target, beats: l.bars * 4, rootNote: rootNote, loop: true), folder: folder)]
-            summary = "loop · \(l.bars) bar\(l.bars == 1 ? "" : "s")"
+                        beatStart: g.firstBarBeat + Double(l.start) / Double(ticksPerBeat), beats: beats, stretch: true,
+                        acid: .init(tempo: target, beats: max(1, Int(beats.rounded())), rootNote: rootNote, loop: true), folder: folder)]
+            summary = l.isBars ? "loop · \(l.bars) bar\(l.bars == 1 ? "" : "s")" : "loop · \(g.rangeLabel(l.start, l.end))"
         case .regions:
             var used: [String: Int] = [:]
             for r in regionsToExport.sorted(by: { ($0.laneId, $0.start) < ($1.laneId, $1.start) }) {
@@ -867,8 +1027,10 @@ final class Session: ObservableObject {
                 let p = ExportJob.Part(stems: Dictionary(uniqueKeysWithValues: lane.stems.map { ($0, Float(1)) }),
                                        segs: segments(for: lane.id))
                 let out = ExportJob.Output(tag: lane.fileTag, stems: p.stems, parts: [p], name: name)
-                jobs.append(job([out], beatStart: g.firstBarBeat + Double(r.start), beats: Double(r.len), stretch: true,
-                                acid: .init(tempo: target, beats: r.len, rootNote: rootNote, loop: true), folder: folder))
+                let beats = Double(r.len) / Double(ticksPerBeat)
+                jobs.append(job([out], beatStart: g.firstBarBeat + Double(r.start) / Double(ticksPerBeat), beats: beats, stretch: true,
+                                acid: .init(tempo: target, beats: max(1, Int(beats.rounded())), rootNote: rootNote, loop: true),
+                                folder: folder))
             }
             summary = "region\(jobs.count == 1 ? "" : "s")"
         }

@@ -216,6 +216,10 @@ final class StemPlayer: ObservableObject {
         set { clock.position = newValue }
     }
     @Published private(set) var duration: Double = 0
+    /// Where the edited pieces end (seconds); pieces moved past the song make the timeline longer.
+    @Published private(set) var extent: Double = 0
+    /// The playable timeline: the song, or longer when pieces were moved past its end.
+    var length: Double { max(duration, extent) }
     @Published private(set) var peaks: [StemKind: StemPeaks] = [:]
     /// The four stems summed: the song's real waveform for the MIX view.
     @Published private(set) var mixPeaks: StemPeaks?
@@ -278,6 +282,8 @@ final class StemPlayer: ObservableObject {
         hits = [:]
         loadedID = song.id
         position = 0
+        extent = 0
+        segs = [:]
         var format: AVAudioFormat?
         for kind in StemKind.allCases {
             let url = dir.appendingPathComponent(kind.fileName)
@@ -347,6 +353,7 @@ final class StemPlayer: ObservableObject {
         peaks = [:]
         loadedID = nil
         duration = 0
+        extent = 0
         position = 0
     }
 
@@ -356,7 +363,7 @@ final class StemPlayer: ObservableObject {
 
     func play() {
         guard !files.isEmpty else { return }
-        if position >= duration - 0.01 && !(loopOn && loopRange != nil) { position = 0 }
+        if position >= length - 0.01 && !(loopOn && loopRange != nil) { position = 0 }
         start(at: position)
     }
 
@@ -371,7 +378,7 @@ final class StemPlayer: ObservableObject {
     }
 
     func seek(_ t: Double) {
-        let t = min(max(0, t), duration)
+        let t = min(max(0, t), length)
         if isPlaying {
             start(at: t)
         } else {
@@ -411,6 +418,14 @@ final class StemPlayer: ObservableObject {
     func setArrangement(_ a: [StemKind: [Seg]]) {
         guard a != segs else { return }
         segs = a
+        // Pieces past the end of the song lengthen the timeline (and the click under it).
+        var end = 0.0
+        if let g = clickGrid { for s in a.values { if let last = s.last { end = max(end, g.tickTime(last.tl + last.len)) } } }
+        if abs(end - extent) > 1e-6 {
+            let old = length
+            extent = end
+            if abs(length - old) > 1e-6, let g = clickGrid { buildClickTrack(g) }
+        }
         if isPlaying { start(at: currentPosition()) }
     }
 
@@ -426,9 +441,9 @@ final class StemPlayer: ObservableObject {
         for c in 0..<ch { d[c].update(repeating: 0, count: n) }
         let fade = Int(0.002 * sr)
         for sg in segs {
-            let tl0 = AVAudioFramePosition((g.posTime(sg.tl) * sr).rounded())
-            let tl1 = AVAudioFramePosition((g.posTime(sg.tl + sg.len) * sr).rounded())
-            let src0 = AVAudioFramePosition((g.posTime(sg.src) * sr).rounded())
+            let tl0 = AVAudioFramePosition((g.tickTime(sg.tl) * sr).rounded())
+            let tl1 = AVAudioFramePosition((g.tickTime(sg.tl + sg.len) * sr).rounded())
+            let src0 = AVAudioFramePosition((g.tickTime(sg.src) * sr).rounded())
             let a = max(tl0, from), b = min(tl1, to)
             guard b > a else { continue }
             let srcA = src0 + (a - tl0)
@@ -460,8 +475,8 @@ final class StemPlayer: ObservableObject {
 
     /// A click on every beat of the grid, higher on the 1, as long as the song.
     private func buildClickTrack(_ g: Grid) {
-        guard let format, duration > 0 else { return }
-        let total = AVAudioFrameCount(duration * sampleRate)
+        guard let format, length > 0 else { return }
+        let total = AVAudioFrameCount(length * sampleRate)
         guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: total), let data = buf.floatChannelData else { return }
         buf.frameLength = total
         let ch = Int(format.channelCount)
@@ -483,7 +498,7 @@ final class StemPlayer: ObservableObject {
         var b = floor(g.beat(at: 0))
         while true {
             let t = g.time(b) + shift
-            if t >= duration { break }
+            if t >= length { break }
             let start = Int((t * sampleRate).rounded())
             let isOne = ((Int((b - g.firstBarBeat).rounded()) % 4) + 4) % 4 == 0
             let wave = isOne ? hi : lo
@@ -536,7 +551,7 @@ final class StemPlayer: ObservableObject {
         } catch {
             return
         }
-        let total = AVAudioFramePosition(duration * sampleRate)
+        let total = AVAudioFramePosition(length * sampleRate)
         var from = min(max(0, frame(t)), total)
         playLoop = nil
 
@@ -572,19 +587,21 @@ final class StemPlayer: ObservableObject {
             for (kind, node) in nodes {
                 guard let file = files[kind] else { continue }
                 guard let edited = segs[kind], let g = clickGrid else {
-                    node.scheduleSegment(file, startingFrame: from,
-                                         frameCount: AVAudioFrameCount(total - from), at: nil)
+                    if file.length > from {
+                        node.scheduleSegment(file, startingFrame: from,
+                                             frameCount: AVAudioFrameCount(file.length - from), at: nil)
+                    }
                     continue
                 }
                 // Each piece at its own place on the timeline; gaps stay silent.
                 let fromT = Double(from) / sampleRate
                 for sg in edited {
-                    let tl0 = g.posTime(sg.tl), tl1 = g.posTime(sg.tl + sg.len)
+                    let tl0 = g.tickTime(sg.tl), tl1 = g.tickTime(sg.tl + sg.len)
                     guard tl1 > fromT else { continue }
                     let off = max(0, fromT - tl0)
                     var at = tl0 + off
-                    var sf = frame(g.posTime(sg.src) + off)
-                    let ef = min(frame(g.posTime(sg.src + sg.len)), total)
+                    var sf = frame(g.tickTime(sg.src) + off)
+                    let ef = min(frame(g.tickTime(sg.src + sg.len)), file.length)
                     if sf < 0 { at += Double(-sf) / sampleRate; sf = 0 }
                     guard ef > sf else { continue }
                     let when = AVAudioTime(sampleTime: AVAudioFramePosition(((at - fromT) * sampleRate).rounded()), atRate: sampleRate)
@@ -632,9 +649,9 @@ final class StemPlayer: ObservableObject {
     private func tick() {
         let p = currentPosition()
         position = p
-        if playLoop == nil && p >= duration - 0.005 {
+        if playLoop == nil && p >= length - 0.005 {
             stopNodes()
-            position = duration
+            position = length
             return
         }
         var lv: [StemKind: Float] = [:]

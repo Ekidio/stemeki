@@ -18,7 +18,12 @@ final class Library: ObservableObject {
     private var python: String?
 
     private init() {
-        root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Music/STEMEKI")
+        // Testing: STEMEKI_LIBRARY=<folder> keeps a test copy away from the real song list.
+        if let test = ProcessInfo.processInfo.environment["STEMEKI_LIBRARY"] {
+            root = URL(fileURLWithPath: test, isDirectory: true)
+        } else {
+            root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Music/STEMEKI")
+        }
         try? FileManager.default.createDirectory(at: songsDir, withIntermediateDirectories: true)
         startClean()
         load()
@@ -71,6 +76,8 @@ final class Library: ObservableObject {
     /// Every launch starts with a clean slate: the previous session's songs leave the list and their
     /// stem folders go to the Trash (recoverable from there).
     private func startClean() {
+        // A test library (STEMEKI_LIBRARY) keeps its songs.
+        if ProcessInfo.processInfo.environment["STEMEKI_LIBRARY"] != nil { return }
         let fm = FileManager.default
         if let items = try? fm.contentsOfDirectory(at: songsDir, includingPropertiesForKeys: nil) {
             for item in items { try? fm.trashItem(at: item, resultingItemURL: nil) }
@@ -92,8 +99,9 @@ final class Library: ObservableObject {
             guard !pts.isEmpty else { continue }
             let shift = Int(Grid.legacyFirstBarBeat(points: pts, bpm: bpm, duration: dur))
             guard shift != 0 else { continue }
-            if var r = songs[i].regions { for k in r.indices { r[k].start += shift }; songs[i].regions = r }
-            if var c = songs[i].clips { for k in c.indices { c[k].start += shift; c[k].src += shift }; songs[i].clips = c }
+            let st = shift * ticksPerBeat
+            if var r = songs[i].regions { for k in r.indices { r[k].start += st }; songs[i].regions = r }
+            if var c = songs[i].clips { for k in c.indices { c[k].start += st; c[k].src += st }; songs[i].clips = c }
             if let lb = songs[i].loopStartBar { songs[i].loopStartBar = lb + shift / 4 }
         }
         if changed { save() }

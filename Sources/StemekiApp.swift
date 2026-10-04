@@ -46,6 +46,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { Session.current?.cueToPlayhead() }
                 return nil
             }
+            // U (no modifiers): the loop takes the start and end of the selection, and follows it.
+            if e.keyCode == 32, e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+               !(NSApp.keyWindow?.firstResponder is NSTextView) {
+                MainActor.assumeIsolated { Session.current?.loopToSelection() }
+                return nil
+            }
+            // ⌘C / ⌘V: copy the selection, paste it at the paste point (not while typing).
+            if (e.keyCode == 8 || e.keyCode == 9), e.modifierFlags.intersection([.command, .option, .control, .shift]) == .command,
+               !(NSApp.keyWindow?.firstResponder is NSTextView) {
+                MainActor.assumeIsolated {
+                    if e.keyCode == 8 { Session.current?.copySelection() } else { Session.current?.paste() }
+                }
+                return nil
+            }
             // D (no modifiers): duplicate the selected piece / region.
             if e.keyCode == 2, e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                !(NSApp.keyWindow?.firstResponder is NSTextView) {

@@ -17,7 +17,7 @@ STEMEKI is an **EKIDIO SOUND** app. See also: [PADEKI](https://github.com/Ekidio
 Most stem splitters stop at "here are four files". STEMEKI goes on:
 
 - **Beat grid from the drums.** The tempo and the downbeats come from the separated drum stem, every beat is pinned to its real hit (AUTO WARP), so the grid, the metronome and every cut sit on the audible start of the hits – even when the tempo drifts.
-- **CUE = bar 1.** The CUE lands on the first full drum hit. Press **C** at the playhead (also while playing) or drag the flag to make any beat the "one".
+- **CUE = bar 1.** The CUE lands on the very first hit AUTO WARP pins, and AUTO WARP runs again from there. Press **C** at the playhead (also while playing) or drag the flag to make any beat the "one".
 - **Rebuild the song.** In **EDIT** mode drag a selection, click to cut, **D** to duplicate, drag pieces around, trim their edges. Pieces overwrite what they cover, like in a DAW.
 - **Export the structure, not only the song.** Draw **regions** on the lanes in **EXPORT** mode and save each one as its own loop.
 
@@ -36,7 +36,10 @@ Most stem splitters stop at "here are four files". STEMEKI goes on:
 
 ### Edit (EDIT mode)
 - Drag = select, click inside = cut, **D** = duplicate (an uncut selection is cut first), ⌥-drag = copy, ⌫ = delete (silence), ⌘Z / ⇧⌘Z = undo / redo.
-- Selection and edges snap to beats when zoomed in, to bars when zoomed out. Trim pieces at their edges.
+- Selection and edges snap to the grid by zoom: bars, beats, and closer in **1/8** and **1/16** lines. Trim pieces at their edges.
+- **⌘C / ⌘V**: copy the selected pieces (or the audio under a selection), click where it should go (a ⌘V marker appears), paste. Pasting again lines up the next copy right after.
+- **U**: the loop takes the start and end of the selected piece or region and follows it when you move or trim it.
+- Drag pieces **past the end of the song**: the timeline grows with them, for a longer mix (FROM CUE exports it all).
 - **RESET** on every lane brings back the freshly separated stem.
 
 ### Export (EXPORT mode)
@@ -66,6 +69,8 @@ Most stem splitters stop at "here are four files". STEMEKI goes on:
 | C | CUE to the playhead |
 | E | EDIT / EXPORT |
 | D | duplicate the selection |
+| U | loop the selection (the loop follows it) |
+| ⌘C / ⌘V | copy / paste at the clicked spot |
 | ⌫ | delete the selection |
 | Esc | clear the selection |
 | [ / ] | NUDGE the music earlier / later |

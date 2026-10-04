@@ -39,13 +39,16 @@ struct EditorView: View {
         for l in lanes { if let sg = session.segments(for: l.id) { laneSegs[l.id] = sg } }
         for l in lanes { audible[l.id] = session.isAudible(l) }
         let loopLabel: String? = session.loop.map { l in
-            l.whole ? "FULL SONG · \(l.bars) bars" : "\(l.startBar)–\(l.endBar - 1) · \(l.bars) bar\(l.bars == 1 ? "" : "s")"
+            if l.whole { return "FULL SONG · \(l.bars) bars" }
+            if !l.isBars, let g = song?.grid { return (session.loopFollows.isEmpty ? "" : "U · ") + g.rangeLabel(l.start, l.end) }
+            return (session.loopFollows.isEmpty ? "" : "U · ") + "\(l.startBar)–\(l.endBar - 1) · \(l.bars) bar\(l.bars == 1 ? "" : "s")"
         }
         return ZStack {
             TimelineCanvas(lanes: lanes, audible: audible, peaks: player.peaks, mixPeaks: player.mixPeaks, grid: song?.grid,
                            loopRange: session.loopRange, loopOn: session.loopEnabled, loopLabel: loopLabel,
                            drumStart: song?.drumStart, regions: session.regions, editMarks: session.workMode == .edit, cueGhost: session.cueGhost, selected: session.selected,
                            clips: session.clips, segs: laneSegs,
+                           pasteAt: session.canPaste ? session.pasteAt.flatMap { p in song?.grid?.tickTime(p) } : nil,
                            viewStart: session.viewStart, viewLength: session.viewLength)
             PlayheadLayer(clock: player.clock, viewStart: session.viewStart, viewLength: session.viewLength)
             TimelineInteraction(session: session)

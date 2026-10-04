@@ -93,7 +93,7 @@ struct Song: Codable, Identifiable, Equatable {
     var contentShift: Double?
     /// Positions are counted from the CUE (bar 1 = CUE). Older saves counted from the file start.
     var cueBased: Bool?
-    /// The CUE was placed on the first full drum hit (done once per song).
+    /// The CUE was placed on the first warp marker (done once per song).
     var autoCued: Bool?
     /// AUTO WARP has run once for this song.
     var autoWarped: Bool?
@@ -102,6 +102,9 @@ struct Song: Codable, Identifiable, Equatable {
     var loopStartBar: Int?
     var loopBars: Int?
     var loopWhole: Bool?
+    /// The same, to the sixteenth (newer saves).
+    var loopStartTick: Int?
+    var loopLenTick: Int?
 
     var grid: Grid? {
         guard let bpm, let duration, bpm > 20 else { return nil }
@@ -254,13 +257,14 @@ struct Grid: Equatable, Sendable {
     }
 }
 
-/// Positions on the timeline are counted in beats from the start of bar 1 (beat 0 = bar 1's downbeat).
+/// Positions on the timeline are counted in ticks (sixteenth notes, 4 per beat) from the start of bar 1
+/// (tick 0 = bar 1's downbeat).
 /// A range marked on one lane (stem): a region to cut or export.
 struct Region: Codable, Identifiable, Equatable {
     var id = UUID()
     var laneId: String
-    var start: Int      // beats
-    var len: Int        // beats
+    var start: Int      // ticks
+    var len: Int        // ticks
 
     var end: Int { start + len } // exclusive
 
@@ -268,27 +272,29 @@ struct Region: Codable, Identifiable, Equatable {
         self.id = id; self.laneId = laneId; self.start = start; self.len = len
     }
 
-    private enum K: String, CodingKey { case id, laneId, start, len, startBar, bars }
+    private enum K: String, CodingKey { case id, laneId, startT, lenT, start, len, startBar, bars }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         id = try c.decode(UUID.self, forKey: .id)
         laneId = try c.decode(String.self, forKey: .laneId)
-        if let s = try c.decodeIfPresent(Int.self, forKey: .start) {
-            start = s; len = try c.decode(Int.self, forKey: .len)
-        } else {  // saved in bars by an earlier version
-            start = (try c.decode(Int.self, forKey: .startBar) - 1) * 4
-            len = try c.decode(Int.self, forKey: .bars) * 4
+        if let s = try c.decodeIfPresent(Int.self, forKey: .startT) {
+            start = s; len = try c.decode(Int.self, forKey: .lenT)
+        } else if let s = try c.decodeIfPresent(Int.self, forKey: .start) {  // saved in beats by an earlier version
+            start = s * 4; len = try c.decode(Int.self, forKey: .len) * 4
+        } else {  // saved in bars
+            start = (try c.decode(Int.self, forKey: .startBar) - 1) * 16
+            len = try c.decode(Int.self, forKey: .bars) * 16
         }
     }
     func encode(to e: Encoder) throws {
         var c = e.container(keyedBy: K.self)
         try c.encode(id, forKey: .id); try c.encode(laneId, forKey: .laneId)
-        try c.encode(start, forKey: .start); try c.encode(len, forKey: .len)
+        try c.encode(start, forKey: .startT); try c.encode(len, forKey: .lenT)
     }
 }
 
-/// A piece of a lane's audio placed on the timeline: song beats [src, src+len), heard at
-/// beats [start, start+len). Later clips lie on top of earlier ones.
+/// A piece of a lane's audio placed on the timeline: song ticks [src, src+len), heard at
+/// ticks [start, start+len). Later clips lie on top of earlier ones.
 struct Clip: Codable, Identifiable, Equatable {
     var id = UUID()
     var laneId: String
@@ -302,27 +308,29 @@ struct Clip: Codable, Identifiable, Equatable {
         self.id = id; self.laneId = laneId; self.start = start; self.src = src; self.len = len
     }
 
-    private enum K: String, CodingKey { case id, laneId, start, src, len, startBar, srcBar, bars }
+    private enum K: String, CodingKey { case id, laneId, startT, srcT, lenT, start, src, len, startBar, srcBar, bars }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         id = try c.decode(UUID.self, forKey: .id)
         laneId = try c.decode(String.self, forKey: .laneId)
-        if let s = try c.decodeIfPresent(Int.self, forKey: .start) {
-            start = s; src = try c.decode(Int.self, forKey: .src); len = try c.decode(Int.self, forKey: .len)
-        } else {  // saved in bars by an earlier version
-            start = (try c.decode(Int.self, forKey: .startBar) - 1) * 4
-            src = (try c.decode(Int.self, forKey: .srcBar) - 1) * 4
-            len = try c.decode(Int.self, forKey: .bars) * 4
+        if let s = try c.decodeIfPresent(Int.self, forKey: .startT) {
+            start = s; src = try c.decode(Int.self, forKey: .srcT); len = try c.decode(Int.self, forKey: .lenT)
+        } else if let s = try c.decodeIfPresent(Int.self, forKey: .start) {  // saved in beats by an earlier version
+            start = s * 4; src = try c.decode(Int.self, forKey: .src) * 4; len = try c.decode(Int.self, forKey: .len) * 4
+        } else {  // saved in bars
+            start = (try c.decode(Int.self, forKey: .startBar) - 1) * 16
+            src = (try c.decode(Int.self, forKey: .srcBar) - 1) * 16
+            len = try c.decode(Int.self, forKey: .bars) * 16
         }
     }
     func encode(to e: Encoder) throws {
         var c = e.container(keyedBy: K.self)
         try c.encode(id, forKey: .id); try c.encode(laneId, forKey: .laneId)
-        try c.encode(start, forKey: .start); try c.encode(src, forKey: .src); try c.encode(len, forKey: .len)
+        try c.encode(start, forKey: .startT); try c.encode(src, forKey: .srcT); try c.encode(len, forKey: .lenT)
     }
 }
 
-/// A run of beats of an edited lane: timeline beats [tl, tl+len) play song beats [src, …).
+/// A run of ticks of an edited lane: timeline ticks [tl, tl+len) play song ticks [src, …).
 struct Seg: Equatable, Sendable {
     var tl: Int
     var src: Int
@@ -379,25 +387,48 @@ extension Array where Element == Clip {
     }
 }
 
+/// Sixteenth notes per beat: the finest step on the timeline.
+let ticksPerBeat = 4
+let ticksPerBar = 16
+
 extension Grid {
-    /// Time of position p (beats from bar 1).
-    func posTime(_ p: Int) -> Double { time(firstBarBeat + Double(p)) }
+    /// Time of tick k (sixteenths from bar 1).
+    func tickTime(_ k: Int) -> Double { time(firstBarBeat + Double(k) / Double(ticksPerBeat)) }
 
     /// Position (beats from bar 1, fractional) at time t.
     func pos(at t: Double) -> Double { beat(at: t) - firstBarBeat }
 
-    /// "4" for a bar start, "4.3" for its third beat.
-    func posLabel(_ p: Int) -> String {
-        let bar = Int(floor(Double(p) / 4)) + 1, beat = ((p % 4) + 4) % 4 + 1
-        return beat == 1 ? "\(bar)" : "\(bar).\(beat)"
+    /// Position in ticks (fractional) at time t.
+    func tick(at t: Double) -> Double { pos(at: t) * Double(ticksPerBeat) }
+
+    /// The span of complete bars, in ticks.
+    var fullStartT: Int { fullStart * ticksPerBeat }
+    var fullEndT: Int { fullEnd * ticksPerBeat }
+
+    /// "4" for a bar start, "4.3" for its third beat, "4.3.2" for a sixteenth inside that beat.
+    func tickLabel(_ k: Int) -> String {
+        let bar = Int(floor(Double(k) / Double(ticksPerBar))) + 1
+        let inBar = ((k % ticksPerBar) + ticksPerBar) % ticksPerBar
+        let beat = inBar / ticksPerBeat + 1, six = inBar % ticksPerBeat + 1
+        if inBar == 0 { return "\(bar)" }
+        return six == 1 ? "\(bar).\(beat)" : "\(bar).\(beat).\(six)"
     }
 
-    /// "4–7" for whole bars, "4.1–4.2" for beats (last beat inclusive).
+    /// "4–7" for whole bars (last bar inclusive), else start and end positions ("4.1–4.3", "4.2.3–5").
     func rangeLabel(_ start: Int, _ end: Int) -> String {
-        if start % 4 == 0 && end % 4 == 0 { return "\(start / 4 + 1)–\(end / 4)" }
-        let lastBar = Int(floor(Double(end - 1) / 4)) + 1, lastBeat = (((end - 1) % 4) + 4) % 4 + 1
-        let firstBar = Int(floor(Double(start) / 4)) + 1, firstBeat = ((start % 4) + 4) % 4 + 1
-        return "\(firstBar).\(firstBeat)–\(lastBar).\(lastBeat)"
+        if start % ticksPerBar == 0 && end % ticksPerBar == 0 { return "\(start / ticksPerBar + 1)–\(end / ticksPerBar)" }
+        if start % ticksPerBeat == 0 && end % ticksPerBeat == 0 {
+            // Whole beats: the last beat inclusive, as before.
+            return "\(tickLabelBeat(start))–\(tickLabelBeat(end - ticksPerBeat))"
+        }
+        return "\(tickLabel(start))–\(tickLabel(end))"
+    }
+
+    /// "4.1" style label of a beat position (always with the beat).
+    private func tickLabelBeat(_ k: Int) -> String {
+        let bar = Int(floor(Double(k) / Double(ticksPerBar))) + 1
+        let inBar = ((k % ticksPerBar) + ticksPerBar) % ticksPerBar
+        return "\(bar).\(inBar / ticksPerBeat + 1)"
     }
 
     /// Song time heard at timeline time t on a lane with these segments (nil = silence).
@@ -410,19 +441,31 @@ extension Grid {
     /// Same in beats: the song beat heard at timeline beat b (nil = silence).
     func sourceBeat(_ b: Double, _ segs: [Seg]?) -> Double? {
         guard let segs else { return b }
-        let p = b - firstBarBeat
-        for s in segs where p >= Double(s.tl) && p < Double(s.tl + s.len) {
-            return b + Double(s.src - s.tl)
+        let k = (b - firstBarBeat) * Double(ticksPerBeat)
+        for s in segs where k >= Double(s.tl) && k < Double(s.tl + s.len) {
+            return b + Double(s.src - s.tl) / Double(ticksPerBeat)
         }
         return nil
     }
 }
 
+/// The loop, in ticks from bar 1. Usually whole bars; a region or piece (U) can make it finer.
 struct LoopSelection: Equatable {
-    var startBar: Int
-    var bars: Int
+    var start: Int
+    var len: Int
     var whole = false
 
+    init(start: Int, len: Int, whole: Bool = false) {
+        self.start = start; self.len = max(1, len); self.whole = whole
+    }
+    init(startBar: Int, bars: Int, whole: Bool = false) {
+        self.init(start: (startBar - 1) * ticksPerBar, len: bars * ticksPerBar, whole: whole)
+    }
+
+    var end: Int { start + len }  // exclusive
+    var isBars: Bool { start % ticksPerBar == 0 && len % ticksPerBar == 0 }
+    var startBar: Int { Int(floor(Double(start) / Double(ticksPerBar))) + 1 }
+    var bars: Int { max(1, len / ticksPerBar) }
     var endBar: Int { startBar + bars } // exclusive
 }
 

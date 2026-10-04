@@ -17,7 +17,7 @@ A STEMEKI egy **EKIDIO SOUND** alkalmazás. Lásd még: [PADEKI](https://github.
 A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen indul:
 
 - **Ütemrács a dobból.** A tempót és az ütemkezdeteket a leválasztott dobsávból méri, minden beatet a valódi ütéséhez rögzít (AUTO WARP). Így a rács, a metronóm és minden vágás az ütések hallható kezdetén ül, akkor is, ha a tempó csúszik.
-- **CUE = 1. ütem.** A CUE az első teljes erejű dobütésre kerül. A lejátszófejnél a **C**-vel (lejátszás közben is) vagy a zászló húzásával bármelyik beatet „egyessé” teheted.
+- **CUE = 1. ütem.** A CUE az AUTO WARP legelső markerére kerül, és onnan fut újra az AUTO WARP. A lejátszófejnél a **C**-vel (lejátszás közben is) vagy a zászló húzásával bármelyik beatet „egyessé” teheted.
 - **Átrajzolod a dalt.** **EDIT** módban kijelölsz, kattintással vágsz, **D**-vel duplikálsz, mozgatod a darabokat, rövidíted a széleiket. A lerakott darab felülírja, amit takar, mint egy DAW-ban.
 - **A szerkezetet exportálod, nem csak a dalt.** **EXPORT** módban régiókat rajzolsz a sávokra, és mindegyik külön loopként mentődik.
 
@@ -36,7 +36,10 @@ A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen
 
 ### Szerkesztés (EDIT mód)
 - Húzás = kijelölés, kattintás bele = vágás, **D** = duplikálás (a még el nem vágott kijelölést előbb elvágja), ⌥-húzás = másolat, ⌫ = törlés (csend), ⌘Z / ⇧⌘Z = visszavonás / újra.
-- Közelítve beatre, távolról ütemre igazodik. A darabok széle húzható.
+- A nagyítástól függően ütemre, beatre, közelről **1/8**-os és **1/16**-os vonalakra igazodik. A darabok széle húzható.
+- **⌘C / ⌘V**: a kijelölt darab (vagy a kijelölés alatti hang) másolása, kattints oda, ahová kell (megjelenik a ⌘V jel), beillesztés. Újabb ⌘V közvetlenül utána rakja a következőt.
+- **U**: a loop felveszi a kijelölt darab vagy régió elejét és végét, és követi, ha mozgatod vagy rövidíted.
+- A darabok **a dal végén túlra** is húzhatók: az idővonal velük nő, így hosszabb mix készíthető (a FROM CUE az egészet exportálja).
 - Minden sávon **RESET**: vissza a frissen szétbontott stemre.
 
 ### Export (EXPORT mód)
@@ -66,6 +69,8 @@ A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen
 | C | CUE a lejátszófejhez |
 | E | EDIT / EXPORT |
 | D | a kijelölés duplikálása |
+| U | loop a kijelölésre (a loop követi) |
+| ⌘C / ⌘V | másolás / beillesztés a kattintott helyre |
 | ⌫ | a kijelölés törlése |
 | Esc | kijelölés megszüntetése |
 | [ / ] | NUDGE: a zene korábbra / későbbre |

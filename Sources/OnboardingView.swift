@@ -19,7 +19,7 @@ struct OnboardingView: View {
              text: "It starts playing at once while the AI splits it into vocals, drums, bass and instruments, and locks it to the bar grid.",
              keys: "drag & drop · ⌘O"),
         Card(step: "2", title: "CUE = bar 1",
-             text: "The CUE lands on the first full drum hit. Hear the “one” somewhere else? Press C at the playhead or drag the flag.",
+             text: "The CUE lands on the very first hit AUTO WARP pins. Hear the “one” somewhere else? Press C at the playhead or drag the flag.",
              keys: "C · drag the CUE flag"),
         Card(step: "3", title: "Rebuild the song",
              text: "EDIT: drag to select, click to cut, D to duplicate, drag pieces around or trim their edges. A mini DAW for the song's structure.",

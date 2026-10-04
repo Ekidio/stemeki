@@ -24,6 +24,8 @@ struct TimelineCanvas: View {
     let selected: Set<UUID>
     let clips: [Clip]
     let segs: [String: [Seg]]
+    /// Where ⌘V will paste (seconds), shown while something is copied.
+    var pasteAt: Double? = nil
     let viewStart: Double
     let viewLength: Double
 
@@ -56,6 +58,22 @@ struct TimelineCanvas: View {
             let labelEvery = [1, 2, 4, 8, 16, 32, 64].first { CGFloat($0) * pxPerBar >= 38 } ?? 128
             let firstBar = g.barIndex(at: viewStart)
             let lastBar = g.barIndex(at: viewEnd) + 1
+            // Eighths and sixteenths when zoomed in close enough (the finer snap lines).
+            let pxPerSix = pxPerBar / 16
+            if pxPerSix * 2 > 9 {
+                var fine = Path(), sixteenths = Path()
+                for b in firstBar...lastBar {
+                    for k in 1..<16 where k % 4 != 0 {
+                        guard k % 2 == 0 || pxPerSix > 9 else { continue }
+                        let xx = x(g.time(g.barBeat(b) + Double(k) / 4), w)
+                        guard xx >= -2, xx <= w + 2 else { continue }
+                        let line = Path { $0.move(to: CGPoint(x: xx, y: rulerHeight)); $0.addLine(to: CGPoint(x: xx, y: size.height)) }
+                        if k % 2 == 0 { fine.addPath(line) } else { sixteenths.addPath(line) }
+                    }
+                }
+                ctx.stroke(fine, with: .color(.white.opacity(0.025)), lineWidth: 1)
+                ctx.stroke(sixteenths, with: .color(.white.opacity(0.015)), lineWidth: 1)
+            }
             if pxPerBar / 4 > 9 {
                 var beats = Path()
                 for b in firstBar...lastBar {
@@ -199,7 +217,7 @@ struct TimelineCanvas: View {
             for r in regions {
                 guard let li = lanes.firstIndex(where: { $0.id == r.laneId }) else { continue }
                 let lane = lanes[li]
-                let x0 = x(g.posTime(r.start), w), x1 = x(g.posTime(r.end), w)
+                let x0 = x(g.tickTime(r.start), w), x1 = x(g.tickTime(r.end), w)
                 guard x1 >= 0, x0 <= w else { continue }
                 let top = rulerHeight + CGFloat(li) * laneH
                 let rect = CGRect(x: x0, y: top + 3, width: x1 - x0, height: laneH - 6)
@@ -232,7 +250,7 @@ struct TimelineCanvas: View {
             for c in clips {
                 guard let li = lanes.firstIndex(where: { $0.id == c.laneId }) else { continue }
                 let lane = lanes[li]
-                let x0 = x(g.posTime(c.start), w), x1 = x(g.posTime(c.end), w)
+                let x0 = x(g.tickTime(c.start), w), x1 = x(g.tickTime(c.end), w)
                 guard x1 >= 0, x0 <= w else { continue }
                 let top = rulerHeight + CGFloat(li) * laneH
                 let rect = CGRect(x: x0, y: top + 2, width: x1 - x0, height: laneH - 4)
@@ -240,6 +258,19 @@ struct TimelineCanvas: View {
                 if sel { ctx.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(Color.white.opacity(0.08))) }
                 ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 3),
                            with: .color(sel ? Color.white : lane.color.opacity(0.55)), lineWidth: sel ? 2 : 1)
+            }
+        }
+
+        // The paste point (⌘V).
+        if let pa = pasteAt {
+            let px = x(pa, w)
+            if px >= 0 && px <= w {
+                var dash = Path()
+                dash.move(to: CGPoint(x: px, y: rulerHeight)); dash.addLine(to: CGPoint(x: px, y: size.height))
+                ctx.stroke(dash, with: .color(.white.opacity(0.75)), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
+                let tag = CGRect(x: px + 3, y: rulerHeight + 3, width: 26, height: 13)
+                ctx.fill(Path(roundedRect: tag, cornerRadius: 3), with: .color(.white))
+                ctx.draw(Text("⌘V").font(Theme.mono(8.5, .heavy)).foregroundColor(.black), at: CGPoint(x: tag.midX, y: tag.midY))
             }
         }
 
@@ -345,6 +376,8 @@ final class TimelineNSView: NSView {
             switch e.charactersIgnoringModifiers?.lowercased() {
             case "z": e.modifierFlags.contains(.shift) ? c.session.redo() : c.session.undo(); return
             case "d": c.session.duplicateSelected(); return
+            case "c": c.session.copySelection(); return
+            case "v": c.session.paste(); return
             case "a": c.session.selectAll(); return
             default: return super.keyDown(with: e)
             }
@@ -356,6 +389,8 @@ final class TimelineNSView: NSView {
         case 124: c.session.shiftLoop(1)
         case 51, 117: c.deleteSelection()
         case 53: c.session.clearSelection()
+        case 32:   // U: the loop takes the selection's start and end
+            c.session.loopToSelection()
         case 14:   // E: EDIT / EXPORT
             c.session.workMode = c.session.workMode == .edit ? .export : .edit
         default: super.keyDown(with: e)
@@ -446,19 +481,19 @@ struct TimelineInteraction: NSViewRepresentable {
             var spans: [(Target, Int, Int)] = []
             if p.y < rulerHeight {
                 guard p.y >= loopBandTop - 4, let l = session.loop else { return .empty }
-                spans = [(.loop, (l.startBar - 1) * 4, l.bars * 4)]
+                spans = [(.loop, l.start, l.len)]
             } else if let lane = lane(at: p, size) {
                 spans = session.regions.filter { $0.laneId == lane.id }
                     .sorted { session.selected.contains($0.id) && !session.selected.contains($1.id) }
                     .map { (.region($0.id), $0.start, $0.len) }
             }
             for (tg, s, n) in spans {
-                let x0 = xOf(g.posTime(s), size.width), x1 = xOf(g.posTime(s + n), size.width)
+                let x0 = xOf(g.tickTime(s), size.width), x1 = xOf(g.tickTime(s + n), size.width)
                 if abs(p.x - x0) < 6 { return .startEdge(tg, s, n) }
                 if abs(p.x - x1) < 6 { return .endEdge(tg, s, n) }
             }
             for (tg, s, n) in spans {
-                let x0 = xOf(g.posTime(s), size.width), x1 = xOf(g.posTime(s + n), size.width)
+                let x0 = xOf(g.tickTime(s), size.width), x1 = xOf(g.tickTime(s + n), size.width)
                 if p.x > x0 && p.x < x1 { return .inside(tg, s, n) }
             }
             return .empty
@@ -467,7 +502,7 @@ struct TimelineInteraction: NSViewRepresentable {
         /// The top piece under the mouse on an edited lane.
         private func clip(at p: CGPoint, _ size: CGSize) -> Clip? {
             guard let g = session.grid, let lane = lane(at: p, size) else { return nil }
-            let b = Int(floor(g.pos(at: time(p.x, size.width))))
+            let b = Int(floor(g.tick(at: time(p.x, size.width))))
             return session.clips.last { $0.laneId == lane.id && b >= $0.start && b < $0.end }
         }
 
@@ -487,23 +522,25 @@ struct TimelineInteraction: NSViewRepresentable {
             }
         }
 
-        /// Start/length in beats; the loop is kept to whole bars.
+        /// Start/length in ticks.
         private func apply(_ target: Target, start: Int, len: Int) {
             switch target {
             case .loop:
-                let sb = Int((Double(start) / 4).rounded()) + 1, nb = max(1, Int((Double(len) / 4).rounded()))
-                if let l = session.clampLoop(LoopSelection(startBar: sb, bars: nb)), l != session.loop { session.loop = l }
+                if let l = session.clampLoop(LoopSelection(start: start, len: len)), l != session.loop { session.loop = l }
             case .region(let id):
                 session.setRegion(id, start: start, len: len)
             }
         }
 
-        /// Snap step in beats: single beats when a beat is wide enough on screen, else whole bars.
+        /// Snap step in ticks, by zoom: sixteenths, eighths, beats or whole bars, whichever is wide enough
+        /// on screen. The loop snaps to bars, unless it is finer already (made with U).
         private func unit(_ target: Target?, _ size: CGSize) -> Int {
-            if case .loop = target { return 4 }
-            guard let g = session.grid else { return 4 }
+            if case .loop = target, session.loop?.isBars ?? true { return ticksPerBar }
+            guard let g = session.grid else { return ticksPerBar }
             let pxPerBeat = Double(size.width) / (session.viewLength / g.beat)
-            return pxPerBeat >= 20 ? 1 : 4
+            if pxPerBeat / 4 >= 14 { return 1 }
+            if pxPerBeat / 2 >= 14 { return 2 }
+            return pxPerBeat >= 20 ? ticksPerBeat : ticksPerBar
         }
 
         func down(_ p: CGPoint, size: CGSize, clicks: Int, mods: NSEvent.ModifierFlags) {
@@ -522,7 +559,7 @@ struct TimelineInteraction: NSViewRepresentable {
                     }
                 } else if let lane = lane(at: p, size), case .empty = h {
                     let u = unit(nil, size)
-                    let s = Int(floor(g.pos(at: t) / Double(u))) * u
+                    let s = Int(floor(g.tick(at: t) / Double(u))) * u
                     session.addRegion(lane: lane, start: s, len: u)
                 }
                 drag = .none
@@ -588,14 +625,14 @@ struct TimelineInteraction: NSViewRepresentable {
                 if case .scrub = drag { session.player.seek(t) }
                 return
             }
-            /// Nearest snap line (in beats) to time x.
-            func snap(_ x: Double, _ u: Int) -> Int { Int((g.pos(at: x) / Double(u)).rounded()) * u }
+            /// Nearest snap line (in ticks) to time x.
+            func snap(_ x: Double, _ u: Int) -> Int { Int((g.tick(at: x) / Double(u)).rounded()) * u }
             func span(_ a: Double, _ b: Double, _ u: Int) -> (Int, Int) {
                 let s = snap(min(a, b), u)
                 let e = max(s + u, snap(max(a, b), u))
                 return (s, e - s)
             }
-            func delta(_ t0: Double, _ u: Int) -> Int { Int(((g.pos(at: t) - g.pos(at: t0)) / Double(u)).rounded()) * u }
+            func delta(_ t0: Double, _ u: Int) -> Int { Int(((g.tick(at: t) - g.tick(at: t0)) / Double(u)).rounded()) * u }
             switch drag {
             case .none: break
             case .scrub: session.player.seek(t)
@@ -606,14 +643,14 @@ struct TimelineInteraction: NSViewRepresentable {
                     let id = session.addRegion(lane: lane, start: s, len: n)
                     drag = .create(t0, .region(id))
                 } else {
-                    let (s, n) = span(t0, t, 4)
+                    let (s, n) = span(t0, t, ticksPerBar)
                     session.loopEnabled = true
                     apply(.loop, start: s, len: n)
                     drag = .create(t0, .loop)
                 }
             case .pendingLoop(let t0):
                 guard moved else { return }
-                drag = .move(t0, ((session.loop?.startBar ?? 1) - 1) * 4, (session.loop?.bars ?? 1) * 4, .loop)
+                drag = .move(t0, session.loop?.start ?? 0, session.loop?.len ?? ticksPerBar, .loop)
                 NSCursor.closedHand.set()
             case .pendingRegion(let t0, _):
                 guard moved else { return }
@@ -644,9 +681,9 @@ struct TimelineInteraction: NSViewRepresentable {
                 apply(tg, start: s0 + delta(t0, unit(tg, size)), len: n)
             case .regions(let t0, let y0, let base):
                 let lanes = Int(((p.y - y0) / laneHeight(size)).rounded())
-                session.moveRegions(base, beats: delta(t0, unit(nil, size)), lanes: lanes)
+                session.moveRegions(base, ticks: delta(t0, unit(nil, size)), lanes: lanes)
             case .clips(let t0, let base):
-                session.moveClips(base, beats: delta(t0, unit(nil, size)))
+                session.moveClips(base, ticks: delta(t0, unit(nil, size)))
             case .cue:
                 session.cueGhost = g.time(cueTarget(t, size))
             case .trimStart(_, let c):
@@ -669,9 +706,19 @@ struct TimelineInteraction: NSViewRepresentable {
         func up(_ p: CGPoint, size: CGSize) {
             let t = time(p.x, size.width)
             switch drag {
-            case .pending(_, _, let clip):
-                // A click on a piece selects it; on empty space it moves the playhead.
-                if let clip { session.selected = [clip] } else { session.selected = []; session.player.seek(t) }
+            case .pending(_, let laneId, let clip):
+                // A click on a piece selects it; on empty space it moves the playhead (and on a lane,
+                // it is where ⌘V pastes, on the nearest snap line).
+                if let clip {
+                    session.selected = [clip]
+                } else {
+                    session.selected = []
+                    session.player.seek(t)
+                    if laneId != nil, let g = session.grid {
+                        let u = unit(nil, size)
+                        session.pasteAt = Int((g.tick(at: t) / Double(u)).rounded()) * u
+                    }
+                }
             case .pendingLoop: session.player.seek(t)
             case .pendingRegion(_, let id):
                 // EDIT: a click inside the selection cuts the audio at its start and end.
@@ -703,7 +750,7 @@ struct TimelineInteraction: NSViewRepresentable {
             let mine = session.clips.filter { $0.laneId == lane.id }
             let ordered = mine.filter { session.selected.contains($0.id) } + mine.reversed()
             for c in ordered {
-                let x0 = xOf(g.posTime(c.start), size.width), x1 = xOf(g.posTime(c.end), size.width)
+                let x0 = xOf(g.tickTime(c.start), size.width), x1 = xOf(g.tickTime(c.end), size.width)
                 guard x1 - x0 > 14 else { continue }
                 if abs(p.x - x0) < 5 { return (c, true) }
                 if abs(p.x - x1) < 5 { return (c, false) }
