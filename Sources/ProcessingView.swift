@@ -147,11 +147,18 @@ private struct StemSplitAnimation: View {
         }
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.panel))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
-        .overlay(alignment: .bottomTrailing) {
-            Text("\(Int(min(1, progress) * 100))%")
-                .font(Theme.mono(22, .bold)).foregroundColor(Theme.text.opacity(0.85))
-                .padding(14)
-                .animation(.default, value: Int(progress * 100))
+        .overlay(alignment: .bottomLeading) {
+            // The big number, where the strands start.
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text("\(Int(min(1, progress) * 100))")
+                    .font(.system(size: 64, weight: .heavy, design: .rounded)).monospacedDigit()
+                Text("%").font(.system(size: 28, weight: .heavy, design: .rounded))
+            }
+            .foregroundColor(Theme.text)
+            .shadow(color: Theme.accent.opacity(0.35), radius: 12)
+            .padding(.leading, 26).padding(.bottom, 14)
+            .contentTransition(.numericText())
+            .animation(.easeOut(duration: 0.4), value: Int(progress * 100))
         }
     }
 
@@ -175,7 +182,7 @@ private struct StemSplitAnimation: View {
 
     private func draw(_ ctx: GraphicsContext, _ size: CGSize, _ t: Double) {
         let w = size.width, h = size.height
-        let left: CGFloat = 130, right: CGFloat = 90
+        let left: CGFloat = 230, right: CGFloat = 90
         let span = w - left - right
         let mid = h / 2
         // Waiting: a calm idle mix. Working: the stems fan out over the first ~60% of the progress.
@@ -184,7 +191,7 @@ private struct StemSplitAnimation: View {
         let spacing = (h - 40) / CGFloat(lanes)
 
         // Source mix on the left.
-        ctx.draw(Text("MIX").font(.system(size: 11, weight: .heavy)).foregroundColor(Theme.text), at: CGPoint(x: 28, y: mid), anchor: .leading)
+        ctx.draw(Text("MIX").font(.system(size: 11, weight: .heavy)).foregroundColor(Theme.text), at: CGPoint(x: left - 52, y: mid), anchor: .leading)
 
         for (i, (name, color)) in stems.enumerated() {
             let target = 20 + spacing * (CGFloat(i) + 0.5)
