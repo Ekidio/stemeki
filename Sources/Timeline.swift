@@ -850,7 +850,8 @@ struct OverviewStrip: View {
             for (i, (_, pk)) in all.enumerated() {
                 var r: Float = 0
                 let lv = pk.levels[2]
-                for j in lo..<min(hi, lv.rms.count) { r = max(r, lv.rms[j]) }
+                // Past the song (pieces moved beyond its end) there is no overview data.
+                if lo < lv.rms.count { for j in lo..<min(hi, lv.rms.count) { r = max(r, lv.rms[j]) } }
                 let hgt = CGFloat(r / globalMax) * size.height * 1.6
                 paths[i].addRect(CGRect(x: CGFloat(c), y: y - hgt, width: 1, height: hgt))
                 y -= hgt

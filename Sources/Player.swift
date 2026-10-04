@@ -419,8 +419,17 @@ final class StemPlayer: ObservableObject {
         guard a != segs else { return }
         segs = a
         // Pieces past the end of the song lengthen the timeline (and the click under it).
+        // Only where there is audio: a piece reaching past the song's own end plays silence there.
         var end = 0.0
-        if let g = clickGrid { for s in a.values { if let last = s.last { end = max(end, g.tickTime(last.tl + last.len)) } } }
+        if let g = clickGrid {
+            let songEnd = g.tick(at: duration)
+            for s in a.values {
+                for sg in s {
+                    let audible = min(Double(sg.len), songEnd - Double(sg.src))
+                    if audible > 0 { end = max(end, g.time(g.firstBarBeat + (Double(sg.tl) + audible) / Double(ticksPerBeat))) }
+                }
+            }
+        }
         if abs(end - extent) > 1e-6 {
             let old = length
             extent = end

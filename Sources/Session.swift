@@ -812,11 +812,23 @@ final class Session: ObservableObject {
         moveCue(toBeat: g.beat(at: player.position).rounded())
     }
 
-    /// CUE on the very first warp marker (the first hit AUTO WARP pinned), then AUTO WARP again from there.
+    /// The first warp marker on a real drum hit (at least a quarter of the main kicks' strength), so a faint
+    /// tick in a quiet intro does not become the 1.
+    private func firstDrumMarker(_ g: Grid) -> BeatPoint? {
+        let pts = g.points.sorted { $0.beat < $1.beat }
+        guard let d = player.hits[.drums], d.times.count > 8 else { return pts.first }
+        let w = d.weights.sorted()
+        let main = w[Int(Double(w.count - 1) * 0.9)]
+        return pts.first { p in
+            zip(d.times, d.weights).contains { abs($0.0 - p.time) < 0.03 && $0.1 >= main * 0.25 }
+        } ?? pts.first
+    }
+
+    /// CUE on the first warp marker that sits on a real drum hit, then AUTO WARP again from there.
     /// Without markers: the beat line nearest to the first full drum hit.
     func autoCue(undoable: Bool = true) {
         guard let g = grid else { return }
-        if g.points.count > 1, let first = g.points.min(by: { $0.beat < $1.beat }) {
+        if g.points.count > 1, let first = firstDrumMarker(g) {
             if abs(first.beat) > 1e-9 { moveCue(toBeat: first.beat, undoable: undoable) }
             autoWarp()
             return
