@@ -21,43 +21,20 @@
 			</array>
 		</dict>
 		<dict>
+			<key>CFBundleTypeIconFile</key>
+			<string>AppIcon</string>
 			<key>CFBundleTypeName</key>
 			<string>STEMEKI Project</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
-			<key>LSTypeIsPackage</key>
-			<true/>
-			<key>CFBundleTypeIconFile</key>
-			<string>AppIcon</string>
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>hu.ekidio.stemeki.project</string>
 			</array>
-		</dict>
-	</array>
-	<key>UTExportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>hu.ekidio.stemeki.project</string>
-			<key>UTTypeDescription</key>
-			<string>STEMEKI Project</string>
-			<key>UTTypeIconFile</key>
-			<string>AppIcon</string>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>com.apple.package</string>
-				<string>public.composite-content</string>
-			</array>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>stemeki</string>
-				</array>
-			</dict>
+			<key>LSTypeIsPackage</key>
+			<true/>
 		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
@@ -71,9 +48,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.3</string>
+	<string>1.4</string>
 	<key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.music</string>
 	<key>LSMinimumSystemVersion</key>
@@ -86,5 +63,28 @@
 	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+				<string>public.composite-content</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>STEMEKI Project</string>
+			<key>UTTypeIconFile</key>
+			<string>AppIcon</string>
+			<key>UTTypeIdentifier</key>
+			<string>hu.ekidio.stemeki.project</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>stemeki</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

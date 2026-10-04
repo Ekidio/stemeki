@@ -40,7 +40,12 @@ A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen
 - **⌘C / ⌘V**: a kijelölt darab (vagy a kijelölés alatti hang) másolása, kattints oda, ahová kell (megjelenik a ⌘V jel), beillesztés. Újabb ⌘V közvetlenül utána rakja a következőt.
 - **U**: a loop felveszi a kijelölt darab vagy régió elejét és végét, és követi, ha mozgatod vagy rövidíted.
 - A darabok **a dal végén túlra** is húzhatók: az idővonal velük nő, így hosszabb mix készíthető (a FROM CUE az egészet exportálja).
+- **Fade-ek**: a darab felső sarkán lévő kis négyzetet befelé húzva fade-in / fade-out (dupla kattintás törli). A lejátszás, a loop és minden export követi.
 - Minden sávon **RESET**: vissza a frissen szétbontott stemre.
+
+### Projektek
+- **File → Save Project (⌘S)**: `Cím.stemeki` fájl a stemekkel, vágásokkal, fade-ekkel, régiókkal, ráccsal, CUE-val, loopal és a sávok hangerejével. Megnyitás: **Open Project (⇧⌘O)**, dupla kattintás vagy ráhúzás az ablakra – azonnal kész, nincs újabb szétbontás.
+- A dallistában pont jelzi a mentetlen változást; kilépéskor rákérdez, mielőtt bármi elveszne.
 
 ### Export (EXPORT mód)
 | Gomb | Mit ment | Tempó | Szerkesztések |
@@ -71,6 +76,8 @@ A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen
 | D | a kijelölés duplikálása |
 | U | loop a kijelölésre (a loop követi) |
 | ⌘C / ⌘V | másolás / beillesztés a kattintott helyre |
+| ⌘S / ⇧⌘S | projekt mentése / mentés másként |
+| ⇧⌘O | projekt megnyitása |
 | ⌫ | a kijelölés törlése |
 | Esc | kijelölés megszüntetése |
 | [ / ] | NUDGE: a zene korábbra / későbbre |

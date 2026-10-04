@@ -40,7 +40,12 @@ Most stem splitters stop at "here are four files". STEMEKI goes on:
 - **⌘C / ⌘V**: copy the selected pieces (or the audio under a selection), click where it should go (a ⌘V marker appears), paste. Pasting again lines up the next copy right after.
 - **U**: the loop takes the start and end of the selected piece or region and follows it when you move or trim it.
 - Drag pieces **past the end of the song**: the timeline grows with them, for a longer mix (FROM CUE exports it all).
+- **Fades**: drag the small square on a piece's top corner inward for a fade-in / fade-out (double-click removes it). Playback, the loop and every export follow it.
 - **RESET** on every lane brings back the freshly separated stem.
+
+### Projects
+- **File → Save Project (⌘S)** writes `Title.stemeki`: the stems, edits, fades, regions, grid, CUE, loop and lane levels. Reopen it with **Open Project (⇧⌘O)**, a double-click or by dropping it on the window: ready at once, no new separation.
+- A dot in the song list marks unsaved changes; quitting asks before anything is lost.
 
 ### Export (EXPORT mode)
 | Button | What it saves | Tempo | Edits |
@@ -71,6 +76,8 @@ Most stem splitters stop at "here are four files". STEMEKI goes on:
 | D | duplicate the selection |
 | U | loop the selection (the loop follows it) |
 | ⌘C / ⌘V | copy / paste at the clicked spot |
+| ⌘S / ⇧⌘S | save project / save as |
+| ⇧⌘O | open project |
 | ⌫ | delete the selection |
 | Esc | clear the selection |
 | [ / ] | NUDGE the music earlier / later |
