@@ -16,7 +16,11 @@ final class Session: ObservableObject {
     let player = StemPlayer()
 
     @Published var mode: StemMode {
-        didSet { UserDefaults.standard.set(mode.rawValue, forKey: "stemMode"); applyGains(); syncArrangement() }
+        didSet {
+            if let id = song?.id, song?.viewMode != mode { library.update(id) { $0.viewMode = mode } }
+            selected = []
+            applyGains(); syncArrangement()
+        }
     }
     @Published var laneStates: [String: LaneState] = [:] { didSet { applyGains() } }
     @Published var loop: LoopSelection? { didSet { loopChanged() } }
@@ -58,7 +62,7 @@ final class Session: ObservableObject {
     init(library: Library) {
         self.library = library
         let d = UserDefaults.standard
-        mode = StemMode(rawValue: d.string(forKey: "stemMode") ?? "") ?? .four
+        mode = .mix
         exportMix = d.bool(forKey: "exportMix")
         exportSeparate = d.object(forKey: "exportSeparate") as? Bool ?? true
         fadeMs = d.object(forKey: "fadeMs") as? Double ?? 3
@@ -98,6 +102,8 @@ final class Session: ObservableObject {
         }
         guard player.loadedID != song.id else { return }
         player.load(song: song, dir: library.stemsDir(song))
+        // Every song starts as one waveform (MIX); stems come in when asked for.
+        mode = song.viewMode ?? .mix
         if let start = song.loopStartBar, let bars = song.loopBars {
             loop = LoopSelection(startBar: start, bars: bars, whole: song.loopWhole ?? false)
         } else {

@@ -209,6 +209,8 @@ final class StemPlayer: ObservableObject {
     }
     @Published private(set) var duration: Double = 0
     @Published private(set) var peaks: [StemKind: StemPeaks] = [:]
+    /// The four stems summed: the song's real waveform for the MIX view.
+    @Published private(set) var mixPeaks: StemPeaks?
     @Published private(set) var onsets: [StemKind: [Double]] = [:]
     @Published private(set) var hits: [StemKind: Onsets.Hits] = [:]
     @Published private(set) var loadedID: UUID?
@@ -263,6 +265,7 @@ final class StemPlayer: ObservableObject {
         files = [:]
         urls = [:]
         peaks = [:]
+        mixPeaks = nil
         onsets = [:]
         hits = [:]
         loadedID = song.id
@@ -306,6 +309,12 @@ final class StemPlayer: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self, self.generation == gen else { return }
                 self.peaks = done
+            }
+            let mixURLs = StemKind.separated.compactMap { list[$0] }
+            let mix = StemPeaks.compute(urls: mixURLs)
+            await MainActor.run { [weak self] in
+                guard let self, self.generation == gen else { return }
+                self.mixPeaks = mix
             }
             var found: [StemKind: Onsets.Hits] = [:]
             await withTaskGroup(of: (StemKind, Onsets.Hits).self) { group in

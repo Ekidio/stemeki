@@ -43,7 +43,7 @@ struct EditorView: View {
             l.whole ? "FULL SONG · \(l.bars) bars" : "\(l.startBar)–\(l.endBar - 1) · \(l.bars) bars"
         }
         return ZStack {
-            TimelineCanvas(lanes: lanes, audible: audible, peaks: player.peaks, grid: song?.grid,
+            TimelineCanvas(lanes: lanes, audible: audible, peaks: player.peaks, mixPeaks: player.mixPeaks, grid: song?.grid,
                            loopRange: session.loopRange, loopOn: session.loopEnabled, loopLabel: loopLabel,
                            drumStart: song?.drumStart, regions: session.regions, selected: session.selected,
                            clips: session.clips, segs: laneSegs,
@@ -108,6 +108,7 @@ struct HeaderBar: View {
             }
             Spacer()
             HStack(spacing: 6) {
+                if session.mode != .mix {
                 Button("ACAPELLA") { session.soloOnly(["vocals"]) }
                     .buttonStyle(PillButtonStyle(color: Theme.vocals, small: true))
                 Button("INSTRUMENTAL") {
@@ -116,8 +117,10 @@ struct HeaderBar: View {
                 .buttonStyle(PillButtonStyle(color: Theme.instrumental, small: true))
                 Button("ALL") { session.clearSoloMute() }
                     .buttonStyle(PillButtonStyle(color: Theme.text, small: true))
+                }
             }
             Segmented(options: StemMode.allCases, selection: $session.mode) { $0.label }
+                .help("MIX: the whole song as one waveform — set the CUE point here. 2/4 STEMS: the separated lanes.")
         }
         .padding(.horizontal, 18)
         .padding(.top, 14)

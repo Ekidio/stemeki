@@ -127,21 +127,21 @@ struct GridCard: View {
                     HStack(spacing: 3) { Image(systemName: "wand.and.stars"); Text("AUTO WARP") }
                 }
                 .buttonStyle(PillButtonStyle(color: Theme.instrumental, small: true))
-                .help("Follow the hits from the 1 and pin every bar to its real downbeat")
+                .help("Follow the hits from the CUE point and pin every bar to its real downbeat")
                 Button("RESET") { session.resetGrid() }
                     .buttonStyle(PillButtonStyle(color: .orange, small: true))
-                    .help("Back to the detected 1 and tempo, then AUTO WARP")
+                    .help("Back to the detected CUE point and tempo, then AUTO WARP")
             }
             HStack(spacing: 3) {
                 Text("NUDGE").font(.system(size: 9, weight: .heavy)).foregroundColor(Theme.dim)
                 Button { session.nudge(-session.nudgeStep) } label: { Image(systemName: "chevron.left") }
                     .buttonStyle(PillButtonStyle(color: Theme.loop, small: true))
                     .keyboardShortcut("[", modifiers: [])
-                    .help("Move the music earlier against the grid ([)")
+                    .help("Move the music earlier against the grid, i.e. the CUE point later ([)")
                 Button { session.nudge(session.nudgeStep) } label: { Image(systemName: "chevron.right") }
                     .buttonStyle(PillButtonStyle(color: Theme.loop, small: true))
                     .keyboardShortcut("]", modifiers: [])
-                    .help("Move the music later against the grid (])")
+                    .help("Move the music later against the grid, i.e. the CUE point earlier (])")
                 ForEach([(0.5, "½ BEAT"), (1.0, "1 BEAT"), (2.0, "½ BAR"), (4.0, "1 BAR")], id: \.0) { step, label in
                     Button(label) { session.nudgeStep = step }
                         .buttonStyle(PillButtonStyle(color: Theme.loop, active: session.nudgeStep == step, small: true))

@@ -11,6 +11,7 @@ struct TimelineCanvas: View {
     let lanes: [Lane]
     let audible: [String: Bool]
     let peaks: [StemKind: StemPeaks]
+    let mixPeaks: StemPeaks?
     let grid: Grid?
     let loopRange: ClosedRange<Double>?
     let loopOn: Bool
@@ -89,14 +90,14 @@ struct TimelineCanvas: View {
                 ctx.fill(d, with: .color(Theme.accent.opacity(0.55)))
             }
 
-            // The anchor downbeat ("1") the grid is counted from.
+            // The CUE point: the downbeat the grid is counted from.
             let ax = x(g.anchor, w)
             if ax >= 0 && ax <= w {
                 ctx.fill(Path(CGRect(x: ax - 0.75, y: rulerHeight, width: 1.5, height: laneArea)),
                          with: .color(Theme.accent.opacity(0.35)))
-                let flag = CGRect(x: ax - 15, y: 2, width: 13, height: 12)
+                let flag = CGRect(x: ax - 27, y: 2, width: 25, height: 12)
                 ctx.fill(Path(roundedRect: flag, cornerRadius: 2), with: .color(Theme.accent))
-                ctx.draw(Text("1").font(Theme.mono(9, .heavy)).foregroundColor(.black), at: CGPoint(x: flag.midX, y: flag.midY))
+                ctx.draw(Text("CUE").font(Theme.mono(8.5, .heavy)).foregroundColor(.black), at: CGPoint(x: flag.midX, y: flag.midY))
             }
 
             // Area before bar 1 (pickup) shaded.
@@ -115,7 +116,8 @@ struct TimelineCanvas: View {
             let half = laneH / 2 - 6
             let on = audible[lane.id] ?? true
             let laneSegs = segs[lane.id]
-            let sources = lane.stems.compactMap { peaks[$0] }
+            // The MIX lane draws the real summed waveform once it is ready.
+            let sources = lane.id == Lane.full.id && mixPeaks != nil ? [mixPeaks!] : lane.stems.compactMap { peaks[$0] }
             guard let first = sources.first else { continue }
             let sr = first.sampleRate
             let samplesPerCol = viewLength * sr / Double(cols - 1)

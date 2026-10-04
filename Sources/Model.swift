@@ -23,13 +23,16 @@ struct Lane: Identifiable, Hashable {
     static let drums = Lane(id: "drums", title: "DRUMS", fileTag: "DRUMS", color: Theme.drums, stems: [.drums])
     static let bass = Lane(id: "bass", title: "BASS", fileTag: "BASS", color: Theme.bass, stems: [.bass])
     static let other = Lane(id: "other", title: "INSTRUMENTS", fileTag: "INSTRUMENTS", color: Theme.other, stems: [.other])
+    /// The whole song (all four stems together = the original mix).
+    static let full = Lane(id: "mix", title: "MIX", fileTag: "MIX", color: Theme.mix, stems: [.vocals, .drums, .bass, .other])
     static let instrumental = Lane(id: "instrumental", title: "INSTRUMENTAL", fileTag: "INSTRUMENTAL", color: Theme.instrumental,
                                    stems: [.drums, .bass, .other])
 
-    static let all: [Lane] = [.vocals, .drums, .bass, .other, .instrumental]
+    static let all: [Lane] = [.full, .vocals, .drums, .bass, .other, .instrumental]
 
     static func lanes(for mode: StemMode) -> [Lane] {
         switch mode {
+        case .mix: return [.full]
         case .four: return [.vocals, .drums, .bass, .other]
         case .two: return [.vocals, .instrumental]
         }
@@ -37,8 +40,14 @@ struct Lane: Identifiable, Hashable {
 }
 
 enum StemMode: String, CaseIterable, Codable {
-    case two, four
-    var label: String { self == .two ? "2 STEM" : "4 STEM" }
+    case mix, two, four
+    var label: String {
+        switch self {
+        case .mix: return "MIX"
+        case .two: return "2 STEMS"
+        case .four: return "4 STEMS"
+        }
+    }
 }
 
 enum SongState: String, Codable {
@@ -74,6 +83,8 @@ struct Song: Codable, Identifiable, Equatable {
     var beatMap: [BeatPoint]?
     /// Tempo the exported loops are stretched to (nil = the song's tempo rounded).
     var targetBpm: Double?
+    /// MIX / 2 STEMS / 4 STEMS view for this song (new songs open in MIX).
+    var viewMode: StemMode?
     /// Bar regions marked on the lanes, exported together.
     var regions: [Region]?
     /// Edited audio: cut pieces per lane. A lane without clips plays the song as it is.
@@ -314,6 +325,7 @@ enum Theme {
     static let bass = Color(red: 0.24, green: 0.86, blue: 0.59)
     static let other = Color(red: 0.36, green: 0.66, blue: 1.0)
     static let instrumental = Color(red: 0.62, green: 0.49, blue: 1.0)
+    static let mix = Color(red: 0.74, green: 0.78, blue: 0.92)
 
     static func mono(_ size: CGFloat, _ weight: Font.Weight = .medium) -> Font {
         .system(size: size, weight: weight, design: .monospaced)
