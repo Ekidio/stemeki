@@ -64,7 +64,13 @@ enum AutoWarp {
         // A steady song (a click track, a drum machine): one straight line through all the drum hits holds
         // over the whole song, and every beat is pinned to its own hit. Tracking beat by beat is for songs
         // whose tempo really moves; on a steady one it can lose a beat in a break and drift after it.
-        let steady = steadyPins(drums: drums, grid: grid, p0: p0, duration: grid.duration)
+        var steady = steadyPins(drums: drums, grid: grid, p0: p0, duration: grid.duration)
+        // A 1 set by hand (or already placed) stays exactly where it is, even between the hits' beats:
+        // the fitted map is only renumbered so that this moment is beat 0.
+        if !rephase, let s = steady {
+            let k = Grid(points: s.map { BeatPoint(beat: $0.0, time: $0.1) }, bpm: grid.bpm, duration: grid.duration).beat(at: grid.anchor)
+            steady = s.map { ($0.0 - k, $0.1) }
+        }
 
         // Score of a candidate downbeat: how much hit weight sits on its next 32 beats (both ways).
         func phaseScore(_ c: Double) -> Float {
@@ -131,20 +137,8 @@ enum AutoWarp {
         }
 
         var beats: [(Double, Double)]
-        if var steady {
-            // Beats still without a pin: their hit near where the section lines put them.
-            let fill = Grid(points: steady.map { BeatPoint(beat: $0.0, time: $0.1) }, bpm: grid.bpm, duration: grid.duration)
-            var have = Set(steady.map(\.0))
-            if let lo = steady.first?.0, let hi = steady.last?.0 {
-                var b = lo
-                while b <= hi {
-                    if !have.contains(b), let h = bestDrum(near: fill.time(b), window: p0 * 0.08) {
-                        steady.append((b, h.t)); have.insert(b)
-                    }
-                    b += 1
-                }
-            }
-            // Every pin comes from a hit on a fitted line: no smoothing, the grid sits on the hits.
+        if let steady {
+            // A perfectly straight grid per section: the points are on the fitted lines, not on single hits.
             return steady.sorted { $0.0 < $1.0 }.map { BeatPoint(beat: $0.0, time: $0.1) }
         } else {
             beats = track(1) + track(-1).dropFirst()
@@ -193,8 +187,8 @@ enum AutoWarp {
         func fitLine(_ sec: [(t: Double, w: Float)]) -> Line? {
             var bestLine: Line?, bestScore: Float = 0
             // Try the first hits as the beat phase; the line that catches the most hit weight wins.
-            for cand in sec.prefix(8) {
-                var a = cand.t, p = p0, ok = true
+            for cand in sec.prefix(8).map(\.t) {
+                var a = cand, p = p0, ok = true
                 for window in [0.2, 0.14, 0.1, 0.08] {
                     let pts = sec.compactMap { h -> (b: Double, t: Double, w: Double)? in
                         let bf = (h.t - a) / p, b = bf.rounded()
@@ -217,46 +211,100 @@ enum AutoWarp {
         var lines: [Line] = []
         for sec in sections where sec.count >= 8 {
             guard let l = fitLine(sec) else { return nil }
-            // One tempo in this section: most of its strong hits sit on the line (off-beat hits are fine, smeared ones are not).
+            // One tempo in this section: most of its strong hits sit on the line's sixteenth grid
+            // (off-beat and syncopated hits are fine, smeared ones are not).
             let strong = sec.filter { $0.w >= main * 0.5 }
-            let onLine = strong.filter { h in let bf = (h.t - l.a) / l.p; let d = abs(bf - bf.rounded()); return d <= 0.08 || abs(d - 0.5) <= 0.08 }
+            let onLine = strong.filter { h in let q = (h.t - l.a) / l.p * 4; return abs(q - q.rounded()) <= 0.24 }
             guard strong.count < 6 || Double(onLine.count) / Double(strong.count) >= 0.7 else { return nil }
             lines.append(l)
         }
         guard !lines.isEmpty, lines.map({ $0.last - $0.first }).reduce(0, +) > 0.3 * duration else { return nil }
         // Number the beats: the biggest section from the grid's own numbering, the others counted across the gaps.
+        // A section's line may have locked onto a sixteenth beside the beat (syncopated drums): of the four
+        // sixteenth phases, the one that continues the neighbour's beats across the gap is the beat.
         let mainIdx = lines.indices.max { lines[$0].hits.count < lines[$1].hits.count }!
         var offset = [Double](repeating: 0, count: lines.count)   // beat number = k + offset[i], k counted on line i from its a
         offset[mainIdx] = (grid.beat(at: lines[mainIdx].a) - grid.firstBarBeat).rounded()
         func lastK(_ l: Line) -> Double { ((l.last - l.a) / l.p).rounded() }
         func firstK(_ l: Line) -> Double { ((l.first - l.a) / l.p).rounded() }
+        func align(_ cur: Line, from ref: Line, refOff: Double, forward: Bool) -> (Line, Double) {
+            let avg = (ref.p + cur.p) / 2
+            let kRef = forward ? lastK(ref) : firstK(ref)
+            let tRef = ref.a + ref.p * kRef
+            var best: (line: Line, off: Double, dist: Double)?
+            for j in 0..<4 {
+                var l = cur
+                l.a = cur.a + Double(j) * cur.p / 4
+                let kCur = forward ? firstK(l) : lastK(l)
+                let tCur = l.a + l.p * kCur
+                let n = (tCur - tRef) / avg
+                let dist = abs(n - n.rounded())
+                if dist < (best?.dist ?? .infinity) { best = (l, kRef + refOff + n.rounded() - kCur, dist) }
+            }
+            return (best!.line, best!.off)
+        }
         if mainIdx + 1 < lines.count {
             for i in (mainIdx + 1)..<lines.count {
-                let prev = lines[i - 1], cur = lines[i]
-                let endT = prev.a + prev.p * lastK(prev), startT = cur.a + cur.p * firstK(cur)
-                let n = ((startT - endT) / ((prev.p + cur.p) / 2)).rounded()
-                offset[i] = lastK(prev) + offset[i - 1] + n - firstK(cur)
+                (lines[i], offset[i]) = align(lines[i], from: lines[i - 1], refOff: offset[i - 1], forward: true)
             }
         }
         if mainIdx > 0 {
             for i in stride(from: mainIdx - 1, through: 0, by: -1) {
-                let next = lines[i + 1], cur = lines[i]
-                let startT = next.a + next.p * firstK(next), endT = cur.a + cur.p * lastK(cur)
-                let n = ((startT - endT) / ((next.p + cur.p) / 2)).rounded()
-                offset[i] = firstK(next) + offset[i + 1] - n - lastK(cur)
+                (lines[i], offset[i]) = align(lines[i], from: lines[i + 1], refOff: offset[i + 1], forward: false)
             }
         }
-        // Pins: each beat at its strongest hit near the line.
-        var best: [Double: (t: Double, w: Float)] = [:]
+        // Every beat with a hit, numbered across the song: (beat, time, weight).
+        var pts: [(b: Double, t: Double, w: Double)] = []
         for (i, l) in lines.enumerated() {
             for h in l.hits {
                 let bf = (h.t - l.a) / l.p, k = bf.rounded()
-                guard abs(bf - k) <= 0.08 else { continue }
-                let b = k + offset[i]
-                if (best[b]?.w ?? -1) < h.w { best[b] = (h.t, h.w) }
+                if abs(bf - k) <= 0.08 { pts.append((k + offset[i], h.t, Double(h.w))) }
             }
         }
-        let pins = best.map { ($0.key, $0.value.t) }.sorted { $0.0 < $1.0 }
-        return pins.count >= 16 ? pins : nil
+        func fit(_ x: [(b: Double, t: Double, w: Double)], period: Double? = nil) -> (a: Double, p: Double, med: Double) {
+            var sw = 0.0, sb = 0.0, st = 0.0
+            for v in x { sw += v.w; sb += v.w * v.b; st += v.w * v.t }
+            let mb = sb / sw, mt = st / sw
+            var p = period ?? 0
+            if period == nil {
+                var num = 0.0, den = 0.0
+                for v in x { num += v.w * (v.b - mb) * (v.t - mt); den += v.w * (v.b - mb) * (v.b - mb) }
+                p = den > 0 ? num / den : p0
+            }
+            let a = mt - p * mb
+            let r = x.map { abs($0.t - (a + p * $0.b)) }.sorted()
+            return (a, p, r.isEmpty ? 0 : r[r.count / 2])
+        }
+        /// Studio tempos are round: snap to a whole (or half) BPM when the hits agree just as well.
+        func snapped(_ x: [(b: Double, t: Double, w: Double)], _ f: (a: Double, p: Double, med: Double)) -> (a: Double, p: Double) {
+            let bpm = 60 / f.p
+            for cand in [bpm.rounded(), (bpm * 2).rounded() / 2] where abs(cand - bpm) < 0.03 {
+                let g = fit(x, period: 60 / cand)
+                if g.med <= f.med * 1.1 + 0.0005 { return (g.a, g.p) }
+            }
+            return (f.a, f.p)
+        }
+        guard pts.count >= 16 else { return nil }
+        let whole = fit(pts)
+        let tempos = lines.map { 60 / $0.p }
+        let oneTempo = tempos.allSatisfy { abs($0 / (60 / whole.p) - 1) < 0.0025 }
+        var pins: [(Double, Double)] = []
+        let lo = pts.map(\.b).min()!, hi = pts.map(\.b).max()!
+        if oneTempo {
+            // One straight line through every hit of the song.
+            let l = snapped(pts, whole)
+            pins = [(lo, l.a + l.p * lo), (hi, l.a + l.p * hi)]
+        } else {
+            // A straight line per section; between sections the grid runs straight from one to the next.
+            for i in lines.indices {
+                let mine = pts.filter { p in p.b >= firstK(lines[i]) + offset[i] - 0.5 && p.b <= lastK(lines[i]) + offset[i] + 0.5 }
+                guard mine.count >= 4 else { continue }
+                let l = snapped(mine, fit(mine))
+                let b0 = mine.map(\.b).min()!, b1 = mine.map(\.b).max()!
+                pins += [(b0, l.a + l.p * b0), (b1, l.a + l.p * b1)]
+            }
+        }
+        pins.sort { $0.0 < $1.0 }
+        return pins.count >= 2 ? pins : nil
     }
 }

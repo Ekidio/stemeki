@@ -835,22 +835,27 @@ final class Session: ObservableObject {
         return d.times[i]
     }
 
-    /// CUE HERE: the CUE jumps to the beat line nearest the playhead.
+    /// CUE HERE: the 1 goes exactly to the drum hit at the playhead (or the playhead itself), also between the
+    /// grid's beats. The warp map stays as it is (it follows the tempo); only its numbering moves, so the bars,
+    /// the click and the loops start where you hear the 1.
     func cueToPlayhead() {
         guard let g = grid else { return }
-        moveCue(toBeat: g.beat(at: player.position).rounded())
+        let t = nearestHit(to: player.position, stems: [.drums], maxDist: g.beat * 0.2) ?? player.position
+        let k = g.beat(at: t)
+        moveCue(toBeat: abs(k - k.rounded()) < 0.02 ? k.rounded() : k)
     }
 
-    /// The first warp marker on a real drum hit (at least a quarter of the main kicks' strength), so a faint
-    /// tick in a quiet intro does not become the 1.
+    /// The first real drum hit (at least a quarter of the main kicks' strength) that falls on a beat of the grid,
+    /// so a faint tick in a quiet intro does not become the 1.
     private func firstDrumMarker(_ g: Grid) -> BeatPoint? {
-        let pts = g.points.sorted { $0.beat < $1.beat }
-        guard let d = player.hits[.drums], d.times.count > 8 else { return pts.first }
+        guard let d = player.hits[.drums], d.times.count > 8 else { return g.points.min { $0.beat < $1.beat } }
         let w = d.weights.sorted()
         let main = w[Int(Double(w.count - 1) * 0.9)]
-        return pts.first { p in
-            zip(d.times, d.weights).contains { abs($0.0 - p.time) < 0.03 && $0.1 >= main * 0.25 }
-        } ?? pts.first
+        for (t, wt) in zip(d.times, d.weights) where wt >= main * 0.25 {
+            let b = g.beat(at: t)
+            if abs(b - b.rounded()) < 0.06 { return BeatPoint(beat: b.rounded(), time: g.time(b.rounded())) }
+        }
+        return g.points.min { $0.beat < $1.beat }
     }
 
     /// CUE on the first warp marker that sits on a real drum hit. Only the numbering moves: the warp map
@@ -858,7 +863,7 @@ final class Session: ObservableObject {
     /// Without markers: the beat line nearest to the first full drum hit.
     func autoCue(undoable: Bool = true) {
         guard let g = grid else { return }
-        if g.points.count > 1, let first = firstDrumMarker(g) {
+        if !player.hits.isEmpty, let first = firstDrumMarker(g) {
             if abs(first.beat) > 1e-9 { moveCue(toBeat: first.beat, undoable: undoable) }
             return
         }
@@ -872,8 +877,9 @@ final class Session: ObservableObject {
         guard let g = grid, abs(k) > 1e-9 else { return }
         if undoable { checkpoint() }
         setMap(g.points.map { BeatPoint(beat: $0.beat - k, time: $0.time) })
+        // Edits move with the music (to the nearest sixteenth when the 1 moved between the lines).
         let kt = k * Double(ticksPerBeat), ki = Int(kt.rounded())
-        if abs(kt - Double(ki)) < 1e-9, ki != 0 {
+        if ki != 0 {
             if !allRegions.isEmpty { storeRegions(allRegions.map { var r = $0; r.start -= ki; return r }) }
             marks = marks.map { var r = $0; r.start -= ki; return r }
             if !allClips.isEmpty { storeClips(allClips.map { var c = $0; c.start -= ki; c.src -= ki; return c }) }

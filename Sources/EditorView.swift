@@ -93,7 +93,7 @@ struct HeaderBar: View {
                         Stat(label: "BPM", value: formatBPM(session.outputBPM ?? g.meanBPM), color: Theme.accent)
                         Stat(label: "SONG", value: String(format: "≈%.2f", g.meanBPM), color: Theme.dim)
                         if session.pinCount > 0 {
-                            Stat(label: "WARP", value: "\(session.pinCount) pins", color: Theme.instrumental)
+                            Stat(label: "WARP", value: g.isStraight ? "straight" : "\(session.pinCount) pins", color: Theme.instrumental)
                         }
                         if let sh = song?.contentShift, abs(sh) > 1e-6 {
                             Stat(label: "NUDGE", value: formatShift(sh), color: Theme.loop)
