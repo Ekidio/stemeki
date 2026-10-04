@@ -417,6 +417,8 @@ struct TimelineInteraction: NSViewRepresentable {
             case resizeStart(Int, Target)                      // fixed end (exclusive)
             case resizeEnd(Int, Target)                        // fixed start
             case cue                                           // dragging the CUE flag
+            case trimStart(Double, Clip)                       // EDIT: a piece's start edge
+            case trimEnd(Double, Clip)                         // EDIT: a piece's end edge
         }
 
         private var drag: Drag = .none
@@ -486,6 +488,7 @@ struct TimelineInteraction: NSViewRepresentable {
             case .inside: return .openHand
             case .empty:
                 if p.y < loopBandTop - 4 { return overCue(p, size) ? .openHand : .pointingHand }
+                if clipEdge(p, size) != nil { return .resizeLeftRight }
                 if p.y < rulerHeight { return .crosshair }
                 if session.workMode == .edit, let c = clip(at: p, size), session.selected.contains(c.id) {
                     return NSEvent.modifierFlags.contains(.option) ? .dragCopy : .openHand
@@ -560,6 +563,12 @@ struct TimelineInteraction: NSViewRepresentable {
                 drag = .pendingRegion(t, id)
             case .empty:
                 guard p.y >= rulerHeight else { drag = .pending(t, laneId: nil, clip: nil); return }
+                if let (c, isStart) = clipEdge(p, size) {
+                    session.checkpoint()
+                    session.selected = [c.id]
+                    drag = isStart ? .trimStart(t, c) : .trimEnd(t, c)
+                    return
+                }
                 let c = session.workMode == .edit ? clip(at: p, size) : nil
                 if let c, session.selected.contains(c.id) {
                     if mods.contains(.shift) { session.selected.remove(c.id); drag = .none; return }
@@ -650,6 +659,12 @@ struct TimelineInteraction: NSViewRepresentable {
                 session.moveClips(base, beats: delta(t0, unit(nil, size)))
             case .cue:
                 session.cueGhost = g.time(cueTarget(t, size))
+            case .trimStart(_, let c):
+                let u = unit(nil, size)
+                session.trimClip(c, start: snap(t, u))
+            case .trimEnd(_, let c):
+                let u = unit(nil, size)
+                session.trimClip(c, end: snap(t, u))
             case .resizeStart(let end, let tg):
                 let u = unit(tg, size)
                 let s = min(snap(t, u), end - u)
@@ -674,6 +689,10 @@ struct TimelineInteraction: NSViewRepresentable {
                 if !downMods.contains(.shift) && session.workMode == .edit { session.cutAtRegion(id) }
             case .pendingClip(_, let id):
                 session.selected = [id]
+            case .clips(_, let base):
+                session.resolveOverlaps(Set(base.map(\.id)))
+            case .trimStart(_, let c), .trimEnd(_, let c):
+                session.resolveOverlaps([c.id])
             case .cue:
                 if let g = session.grid {
                     let k = cueTarget(t, size)
@@ -687,6 +706,20 @@ struct TimelineInteraction: NSViewRepresentable {
         }
 
         func deleteSelection() { session.deleteSelected() }
+
+        /// EDIT: a piece edge under the mouse (selected pieces first, then the top one).
+        private func clipEdge(_ p: CGPoint, _ size: CGSize) -> (Clip, Bool)? {
+            guard session.workMode == .edit, let g = session.grid, let lane = lane(at: p, size) else { return nil }
+            let mine = session.clips.filter { $0.laneId == lane.id }
+            let ordered = mine.filter { session.selected.contains($0.id) } + mine.reversed()
+            for c in ordered {
+                let x0 = xOf(g.posTime(c.start), size.width), x1 = xOf(g.posTime(c.end), size.width)
+                guard x1 - x0 > 14 else { continue }
+                if abs(p.x - x0) < 5 { return (c, true) }
+                if abs(p.x - x1) < 5 { return (c, false) }
+            }
+            return nil
+        }
 
         /// Is the mouse on the CUE flag or its line (in the bar-numbers strip)?
         private func overCue(_ p: CGPoint, _ size: CGSize) -> Bool {

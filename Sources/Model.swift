@@ -330,6 +330,35 @@ struct Seg: Equatable, Sendable {
 }
 
 extension Array where Element == Clip {
+    /// The pieces in `ids` cut away whatever they cover on their lane; they end up last (on top).
+    func overwritten(by ids: Set<UUID>) -> [Clip] {
+        let kept = filter { ids.contains($0.id) }
+        guard !kept.isEmpty else { return self }
+        var out: [Clip] = []
+        for o in self {
+            if ids.contains(o.id) { out.append(o); continue }
+            var pieces = [o]
+            for k in kept where k.laneId == o.laneId {
+                var next: [Clip] = []
+                for p in pieces {
+                    guard p.start < k.end, p.end > k.start else { next.append(p); continue }
+                    if p.start < k.start {                       // part before the overlap
+                        var a = p; a.len = k.start - p.start
+                        next.append(a)
+                    }
+                    if p.end > k.end {                           // part after it
+                        var b = p; b.id = (p.start < k.start) ? UUID() : p.id
+                        b.src = p.src + (k.end - p.start); b.start = k.end; b.len = p.end - k.end
+                        next.append(b)
+                    }
+                }
+                pieces = next
+            }
+            out += pieces
+        }
+        return out.filter { !ids.contains($0.id) } + out.filter { ids.contains($0.id) }
+    }
+
     /// The audible pieces after stacking (later clips win), merged into runs.
     func segments(for laneId: String) -> [Seg]? {
         let list = filter { $0.laneId == laneId }

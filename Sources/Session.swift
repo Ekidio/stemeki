@@ -455,10 +455,45 @@ final class Session: ObservableObject {
             if let (s, b) = clampSpan(r.start + shift, r.len) { n.start = s; n.len = b }
             return n
         }
-        if !newC.isEmpty { storeClips(allClips + newC) }   // later = on top
+        if !newC.isEmpty {
+            storeClips(allClips + newC)
+            // Placed right after: overwrite what was there (⌥-drag resolves when it is dropped).
+            if place { resolveOverlaps(Set(newC.map(\.id))) }
+        }
         if !newR.isEmpty { storeActive(activeRegionList + newR) }
         selected = Set(newC.map(\.id) + newR.map(\.id))
         return (newC, newR)
+    }
+
+    /// Trims a piece from its `base` state: a new start (earlier = reveals more audio before it) and/or a new end.
+    func trimClip(_ base: Clip, start: Int? = nil, end: Int? = nil) {
+        guard let g = grid else { return }
+        var list = allClips
+        guard let i = list.firstIndex(where: { $0.id == base.id }) else { return }
+        var c = base
+        let songLo = g.fullStart - 4, songHi = g.fullEnd + 4
+        if let s = start {
+            var ns = min(s, base.end - 1)
+            ns = max(ns, base.start - (base.src - songLo))      // cannot reveal audio before the song
+            c.src = base.src + (ns - base.start)
+            c.start = ns
+            c.len = base.end - ns
+        }
+        if let e = end {
+            var ne = max(e, c.start + 1)
+            ne = min(ne, c.start + (songHi - c.src))            // nor after it
+            c.len = ne - c.start
+        }
+        guard list[i] != c else { return }
+        list[i] = c
+        storeClips(list)
+    }
+
+    /// Overwrite: the pieces in `ids` cut away whatever they cover on their lanes (other pieces lose
+    /// the overlapping part; the rest of them stays).
+    func resolveOverlaps(_ ids: Set<UUID>) {
+        let out = allClips.overwritten(by: ids)
+        if out != allClips { storeClips(out) }
     }
 
     /// D: duplicate what is selected. In EDIT an uncut selection is cut first, then its piece is copied.
