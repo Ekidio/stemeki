@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STEMEKI – stems · loops · remix</title>
+<meta name="description" content="Split any song into stems, rebuild its structure, export DAW-ready loops. A native macOS app by EKIDIO SOUND.">
+<link rel="icon" href="assets/icon.png">
+<meta property="og:title" content="STEMEKI – stems · loops · remix">
+<meta property="og:description" content="Split any song into stems, rebuild its structure, export DAW-ready loops.">
+<meta property="og:image" content="assets/stemeki-editor.png">
+<style>
+  :root{
+    --bg:#0b0b0d; --panel:#16171c; --panel2:#1e2027; --line:rgba(255,255,255,.08);
+    --text:#dcdee8; --dim:#8a8d9c; --accent:#45d9fa;
+    --vocals:#ff5c8a; --drums:#ffa821; --bass:#3ddc97; --other:#5ca8ff; --loop:#ffd60a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+  header.hero{position:relative;overflow:hidden;padding:72px 0 40px;text-align:center;
+    background:radial-gradient(60% 50% at 50% 30%,rgba(92,168,255,.18),transparent 70%),radial-gradient(rgba(255,255,255,.035) 1px,transparent 1.4px) 0 0/6px 6px}
+  .logo{display:inline-flex;align-items:center;gap:.12em;font:900 italic clamp(52px,11vw,104px)/1 -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:-.02em;color:#fff}
+  .eki{position:relative;display:inline-block;transform:skewX(-14deg);padding:.04em .18em .02em;margin-left:.08em;box-shadow:.07em .07em 0 #fff;
+    background:linear-gradient(var(--vocals) 0 25%,var(--drums) 25% 50%,var(--bass) 50% 75%,var(--other) 75%)}
+  .eki i{display:inline-block;transform:skewX(14deg);font-style:italic;text-shadow:0 .03em .06em rgba(0,0,0,.35)}
+  .bands{display:flex;justify-content:center;gap:6px;margin:22px auto 14px;width:min(520px,80%)}
+  .bands span{flex:1;height:4px;border-radius:2px}
+  .sub{font:700 13px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.42em;color:#c9cbd6;margin-bottom:26px}
+  .tag{font-size:clamp(18px,2.6vw,23px);max-width:760px;margin:0 auto 30px;color:#e9eaf1}
+  .tag b{color:#fff}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:10px;padding:13px 22px;border-radius:12px;font-weight:800;letter-spacing:.02em;border:1px solid var(--line)}
+  .btn.primary{background:var(--bass);color:#071a10;box-shadow:0 8px 30px rgba(61,220,151,.25)} .btn.primary:hover{text-decoration:none;filter:brightness(1.08)}
+  .btn.ghost{background:var(--panel2);color:var(--text)} .btn.ghost:hover{text-decoration:none;background:#262833}
+  .req{margin-top:12px;font-size:13px;color:var(--dim)}
+  .shot{margin:46px auto 0;border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.6)}
+  .shot img{display:block;width:100%;height:auto}
+  section{padding:64px 0}
+  h2{font:900 italic clamp(28px,4vw,38px)/1.1 -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;margin:0 0 10px;letter-spacing:-.01em}
+  .lead{color:var(--dim);max-width:720px;margin:0 0 30px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 20px 18px;position:relative;overflow:hidden}
+  .card::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--c)}
+  .card h3{margin:4px 0 8px;color:#fff;font-size:18px}
+  .card p{margin:0;color:#c3c6d3;font-size:14.5px}
+  .k{display:inline-block;font:700 12px ui-monospace,Menlo,monospace;background:#fff;color:#000;border-radius:5px;padding:1px 7px;margin:0 2px}
+  .pyramid{display:grid;gap:10px}
+  .tier{display:grid;grid-template-columns:150px 1fr auto;gap:16px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px}
+  .tier .name{font:800 13px ui-monospace,Menlo,monospace;letter-spacing:.08em;padding:7px 10px;border-radius:8px;text-align:center;color:#071a10;background:var(--bass)}
+  .tier p{margin:0;color:#c9ccd8;font-size:14.5px}
+  .tier .meta{font:600 12px ui-monospace,Menlo,monospace;color:var(--dim);white-space:nowrap}
+  .tier.unique{border-color:rgba(61,220,151,.45);box-shadow:0 0 0 1px rgba(61,220,151,.15),0 10px 40px rgba(61,220,151,.08)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .two img{width:100%;border-radius:12px;border:1px solid var(--line)}
+  table{width:100%;border-collapse:collapse;font-size:14.5px}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);color:#c9ccd8} td:first-child{white-space:nowrap;width:1%;padding-right:22px}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font:13px ui-monospace,Menlo,monospace;color:#e6e7ee}
+  footer{padding:40px 0 60px;color:var(--dim);font-size:13px;text-align:center;border-top:1px solid var(--line)}
+  footer b{color:#fff;letter-spacing:.18em}
+  @media (max-width:760px){
+    .tier{grid-template-columns:1fr} .tier .meta{white-space:normal}
+    .two{grid-template-columns:1fr}
+    header.hero{padding-top:48px}
+    .sub{letter-spacing:.2em;font-size:11px}
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="logo">STEM<span class="eki"><i>EKI</i></span></div>
+    <div class="bands"><span style="background:var(--vocals)"></span><span style="background:var(--drums)"></span><span style="background:var(--bass)"></span><span style="background:var(--other)"></span></div>
+    <div class="sub">STEMS · LOOPS · REMIX</div>
+    <p class="tag"><b>Split any song into stems, rebuild its structure, export DAW-ready loops.</b> Bar-exact, on a whole BPM, on the audible start of every hit.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/Ekidio/stemeki/releases/latest">⬇ Download for Mac</a>
+      <a class="btn ghost" href="https://github.com/Ekidio/stemeki">GitHub</a>
+    </div>
+    <div class="req">Apple Silicon · macOS 14+ · runs locally with Demucs 4 on the Apple GPU</div>
+    <div class="shot"><img src="assets/stemeki-editor.png" alt="STEMEKI editor with four stem lanes"></div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>Not just four files.</h2>
+    <p class="lead">Most stem splitters stop at “here are your stems”. STEMEKI is where the work starts: a beat grid you can trust, a CUE that is really bar 1, and a mini DAW for the song's structure.</p>
+    <div class="grid">
+      <div class="card" style="--c:var(--drums)"><h3>Grid from the drums</h3><p>Tempo and downbeats come from the separated drum stem. AUTO WARP pins every beat to its real hit, so the grid, the click and every cut sit on the audible start of the hits — even when the tempo drifts.</p></div>
+      <div class="card" style="--c:var(--accent)"><h3>CUE = bar 1</h3><p>The CUE lands on the first full drum hit. Hear the “one” somewhere else? Press <span class="k">C</span> at the playhead, even while playing, or drag the flag.</p></div>
+      <div class="card" style="--c:var(--other)"><h3>Rebuild the song</h3><p>EDIT: drag to select, click to cut, <span class="k">D</span> to duplicate, move pieces, trim their edges. Pieces overwrite what they cover, like in a DAW.</p></div>
+      <div class="card" style="--c:var(--vocals)"><h3>Export the structure</h3><p>EXPORT: draw regions on the lanes — a verse of the drums, a chorus of the bass — and save each one as its own loop in one click.</p></div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <h2>The export pyramid</h2>
+    <p class="lead">From the plain to the unique. Every file keeps the original quality; WAV loops carry ACID and loop-point data, so loop-aware DAWs know what they are.</p>
+    <div class="pyramid">
+      <div class="tier"><div class="name" style="background:#c9ccd8">FULL</div><p>Every marked stem as it is — the whole song, original tempo.</p><div class="meta">what any splitter does</div></div>
+      <div class="tier"><div class="name" style="background:var(--accent)">FROM CUE</div><p>Every stem from bar 1 to the end, on the export tempo — drop them under each other in your DAW, all on the grid.</p><div class="meta">DJ-ready stems</div></div>
+      <div class="tier unique"><div class="name" style="background:var(--loop)">LOOP</div><p>The loop range of every stem, bar-exact — the chorus, the drop, the break, as stems.</p><div class="meta">what only DAWs do</div></div>
+      <div class="tier unique"><div class="name">REGIONS</div><p>Every region you drew, each in its own file, from the song you rebuilt. Unbeatable for building a loop library.</p><div class="meta">STEMEKI's own</div></div>
+    </div>
+    <p class="lead" style="margin-top:18px"><b style="color:#fff">SEL. MIX</b> puts the marked lanes into one file — for example DRUMS+BASS — following the faders.</p>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap two">
+    <div><h2 style="font-size:26px">It plays at once</h2><p class="lead">Drop a song: it starts playing while the AI separates it, and the stems open in colour, following the playhead.</p><img src="assets/stemeki-preparing.png" alt="Preparing screen with the stem-split animation"></div>
+    <div><h2 style="font-size:26px">Learn it in 30 seconds</h2><p class="lead">A four-card intro on the first start shows the whole workflow. The <b style="color:#fff">?</b> button brings it back.</p><img src="assets/stemeki-intro.png" alt="First-run intro cards"></div>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <h2>Keyboard</h2>
+    <table>
+      <tr><td><span class="k">Space</span></td><td>play / pause</td></tr>
+      <tr><td><span class="k">Enter</span></td><td>to the start (the view follows with FOLLOW on)</td></tr>
+      <tr><td><span class="k">C</span></td><td>CUE to the playhead</td></tr>
+      <tr><td><span class="k">E</span></td><td>EDIT / EXPORT</td></tr>
+      <tr><td><span class="k">D</span> <span class="k">⌫</span> <span class="k">Esc</span></td><td>duplicate · delete · clear the selection</td></tr>
+      <tr><td><span class="k">L</span> <span class="k">K</span></td><td>loop · metronome</td></tr>
+      <tr><td><span class="k">[</span> <span class="k">]</span></td><td>NUDGE the music earlier / later</td></tr>
+      <tr><td><span class="k">⌘Z</span> <span class="k">⌘E</span> <span class="k">⇧⌘E</span></td><td>undo · export LOOP · export REGIONS</td></tr>
+    </table>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <h2>Install</h2>
+    <p class="lead">1. Download the DMG and drag STEMEKI into Applications. 2. The first time, macOS may block it: click <b style="color:#fff">Done</b>, then System Settings → Privacy &amp; Security → <b style="color:#fff">Open Anyway</b>. 3. Updates arrive by themselves.</p>
+    <p class="lead" style="margin-bottom:10px">STEMEKI separates with Demucs 4 on your Mac. It needs Python 3.10+ with:</p>
+    <pre>pip install demucs librosa soundfile</pre>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap"><b>EKIDIO SOUND</b><br>STEMEKI · <a href="https://github.com/Ekidio/padeki">PADEKI</a> · <a href="https://github.com/Ekidio/daweki_v3">DAWEKI V3</a><br><br>Separation by <a href="https://github.com/facebookresearch/demucs">Demucs</a> (MIT).</div>
+</footer>
+</body>
+</html>
