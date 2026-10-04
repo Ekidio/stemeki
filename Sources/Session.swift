@@ -121,6 +121,7 @@ final class Session: ObservableObject {
         }
         applyGains()
         syncPlayer()
+        resumeHandOff()
     }
 
     // MARK: Mixer
@@ -554,6 +555,21 @@ final class Session: ObservableObject {
 
     func scroll(by seconds: Double) {
         viewStart = max(0, min(viewStart + seconds, max(0, duration - viewLength)))
+    }
+
+    private var handOffTo: (id: UUID, at: Double)?
+
+    /// The processing screen was playing the song: continue in the editor from there.
+    func handOff(songID: UUID, at t: Double) {
+        handOffTo = (songID, t)
+        if player.loadedID == songID { resumeHandOff() }
+    }
+
+    private func resumeHandOff() {
+        guard let h = handOffTo, player.loadedID == h.id else { return }
+        handOffTo = nil
+        player.seek(h.at)
+        player.play()
     }
 
     /// Playhead to the very start; with FOLLOW the view goes there too.

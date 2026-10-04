@@ -58,25 +58,41 @@ struct ProcessingView: View {
                     .frame(maxWidth: .infinity)
                 } else {
                     StemSplitAnimation(progress: p, waiting: song.state == .queued)
+                        .overlay(alignment: .topLeading) {
+                            let st = Self.stage(p, song.state)
+                            HStack(spacing: 8) {
+                                Text(st.step == 0 ? "WAITING" : "STEP \(st.step) / 5")
+                                    .font(Theme.mono(10, .bold)).foregroundColor(Theme.accent)
+                                Text(st.text).font(.system(size: 12, weight: .semibold)).foregroundColor(Theme.text)
+                            }
+                            .padding(14)
+                            .animation(.easeInOut, value: st.step)
+                        }
                 }
             }
             .frame(height: 230)
             .padding(14)
         }
-        .onAppear { preview.load(URL(fileURLWithPath: song.sourcePath)) }
-        .onChange(of: song.id) { _, _ in preview.load(URL(fileURLWithPath: song.sourcePath)) }
-        .onDisappear { preview.stop() }
+        .onAppear { preview.load(URL(fileURLWithPath: song.sourcePath), autoplay: true) }
+        .onChange(of: song.id) { _, _ in preview.load(URL(fileURLWithPath: song.sourcePath), autoplay: true) }
+        .onDisappear {
+            // Still playing when the stems are ready: the editor carries on from the same moment.
+            if preview.isPlaying { Session.current?.handOff(songID: song.id, at: preview.position) }
+            preview.stop()
+        }
     }
 
-    private func stage(_ p: Double, _ state: SongState) -> String {
-        if state == .queued { return "Waiting for its turn…" }
-        if state == .analyzing || p >= 0.9 { return "Locking the beat grid…" }
+    private func stage(_ p: Double, _ state: SongState) -> String { Self.stage(p, state).text }
+
+    /// What the user reads while waiting, step by step.
+    static func stage(_ p: Double, _ state: SongState) -> (step: Int, text: String) {
+        if state == .queued { return (0, "Queued · another song is being prepared") }
+        if state == .analyzing || p >= 0.9 { return (5, "Precise BPM detection · quantizing to the bar grid · setting the CUE point") }
         switch p {
-        case ..<0.06: return "Listening to the song…"
-        case ..<0.30: return "Finding the vocals…"
-        case ..<0.55: return "Pulling out the drums…"
-        case ..<0.75: return "Isolating the bass…"
-        default: return "Separating the instruments…"
+        case ..<0.25: return (1, "AI stem separation starting · Hybrid Transformer model on the Apple GPU")
+        case ..<0.50: return (2, "Isolating vocals and drums from the full mix")
+        case ..<0.75: return (3, "Extracting bass and harmonic layers")
+        default: return (4, "Rebuilding each stem at full resolution")
         }
     }
 }
@@ -147,12 +163,13 @@ private struct StemSplitAnimation: View {
     /// Each stem's own motion: vocals smooth, drums spiky, bass slow and deep, instruments busy.
     private func wave(_ i: Int, _ u: Double, _ t: Double) -> Double {
         switch i {
-        case 0: return sin(u * 9 + t * 2.1) * 0.55 + sin(u * 23 + t * 3.3) * 0.25
+        case 0: return sin(u * 9 - t * 2.1) * 0.55 + sin(u * 23 - t * 3.3) * 0.25
         case 1:
-            let beat = (u * 8 + t * 1.6).truncatingRemainder(dividingBy: 1)
+            var beat = (u * 8 - t * 1.6).truncatingRemainder(dividingBy: 1)
+            if beat < 0 { beat += 1 }
             return exp(-beat * 9) * sin(u * 140) * 1.1
-        case 2: return sin(u * 4 + t * 1.2) * 0.85
-        default: return sin(u * 31 + t * 4) * 0.35 + sin(u * 13 - t * 2.4) * 0.35
+        case 2: return sin(u * 4 - t * 1.2) * 0.85
+        default: return sin(u * 31 - t * 4) * 0.35 + sin(u * 13 - t * 2.4) * 0.35
         }
     }
 
@@ -180,7 +197,7 @@ private struct StemSplitAnimation: View {
                 let along = ease((u - 0.04) / 0.45)
                 let y0 = mid + (target - mid) * CGFloat(split * along)
                 let v = wave(i, u, t)
-                let mixWobble = sin(u * 17 + t * 2.6) * (1 - split * along)
+                let mixWobble = sin(u * 17 - t * 2.6) * (1 - split * along)
                 let cy = y0 + CGFloat(mixWobble * 4)
                 // Thickness: a waveform-like envelope that grows as the stem comes free.
                 let thick = CGFloat(2 + (spacing * 0.42) * CGFloat(split * along) * CGFloat(abs(v)))
@@ -224,8 +241,9 @@ final class SourcePreview: ObservableObject {
     private var url: URL?
     private var timer: Timer?
 
-    func load(_ u: URL) {
+    func load(_ u: URL, autoplay: Bool = false) {
         guard u != url else { return }
+        defer { if autoplay && !isPlaying { toggle() } }
         stop()
         url = u
         peaks = nil

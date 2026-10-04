@@ -212,6 +212,8 @@ final class Library: ObservableObject {
                 s.drumStart = r.drumStart
                 s.key = r.key
                 s.camelot = r.camelot
+                // Freshly prepared: open on the four coloured stems.
+                if s.viewMode == nil { s.viewMode = .four }
                 if let bpm = r.bpm, let db = r.downbeat {
                     s.bpm = bpm; s.downbeat = db
                     s.autoBpm = bpm; s.autoDownbeat = db
