@@ -102,4 +102,4 @@ A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen
 ```
 
 ---
-© 2026 EKIDIO SOUND. Szétbontás: [Demucs](https://github.com/facebookresearch/demucs) (MIT).
+© 2026 EKIDIO SOUND. Szétbontás: [Demucs](https://github.com/facebookresearch/demucs) (MIT), beatek: [Beat This!](https://github.com/CPJKU/beat_this) (JKU Linz, MIT).

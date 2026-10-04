@@ -35,6 +35,7 @@ struct AboutView: View {
                 Text("An EKIDIO SOUND app · PADEKI · DAWEKI V3").font(Theme.mono(11)).foregroundColor(Theme.dim)
                     .padding(.top, 8)
                 Text("Stem separation by Demucs (MIT)").font(Theme.mono(11)).foregroundColor(Theme.dim)
+                Text("Beat finder: Beat This! · JKU Linz (MIT)").font(Theme.mono(11)).foregroundColor(Theme.dim)
                 Text("All rights reserved © 2026").font(Theme.mono(11)).foregroundColor(Theme.dim)
                     .padding(.top, 8)
             }

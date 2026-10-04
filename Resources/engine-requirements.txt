@@ -47,3 +47,5 @@ tqdm==4.70.1
 treetable==0.2.6
 typing_extensions==4.16.0
 urllib3==2.8.0
+beat-this==1.1.0
+rotary-embedding-torch==0.9.1

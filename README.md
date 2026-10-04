@@ -102,4 +102,4 @@ Most stem splitters stop at "here are four files". STEMEKI goes on:
 ```
 
 ---
-© 2026 EKIDIO SOUND. Separation by [Demucs](https://github.com/facebookresearch/demucs) (MIT).
+© 2026 EKIDIO SOUND. Separation by [Demucs](https://github.com/facebookresearch/demucs) (MIT), beats by [Beat This!](https://github.com/CPJKU/beat_this) (JKU Linz, MIT).

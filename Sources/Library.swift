@@ -394,13 +394,48 @@ final class Library: ObservableObject {
                 self.processNext()
                 return
             }
-            self.update(id) { s in
+            // Then every beat and downbeat of the whole mix from the beat model (the grid comes from them).
+            self.findBeats(song, python: python) { beats, downbeats in
+                self.update(id) { $0.modelBeats = beats; $0.modelDownbeats = downbeats }
+                self.finishAnalysis(id, r)
+            }
+        }
+    }
+
+    /// Beat This! on the stems summed back into the mix. Without the model (an older engine) the grid comes
+    /// from the drums as before.
+    private func findBeats(_ song: Song, python: String, done: @escaping @MainActor ([Double]?, [Double]?) -> Void) {
+        progress[song.id] = 0.97
+        running = PythonRunner.run(python: python, script: "beats", args: [stemsDir(song).path]) { _ in
+        } completion: { [weak self] status, log in
+            self?.running = nil
+            struct Beats: Decodable { var beats: [Double]; var downbeats: [Double] }
+            let json = log.split(separator: "\n").last(where: { $0.hasPrefix("{") }).map(String.init) ?? ""
+            if status == 0, let d = json.data(using: .utf8), let b = try? JSONDecoder().decode(Beats.self, from: d), b.beats.count >= 16 {
+                done(b.beats, b.downbeats)
+            } else {
+                done(nil, nil)
+            }
+        }
+    }
+
+    private func finishAnalysis(_ id: UUID, _ r: AnalysisResult) {
+        progress[id] = nil
+        guard songs.contains(where: { $0.id == id }) else { processNext(); return }
+        update(id) { s in
                 s.duration = r.duration ?? s.duration
                 s.drumStart = r.drumStart
                 s.key = r.key
                 s.camelot = r.camelot
                 // Freshly prepared: open on the four coloured stems.
                 if s.viewMode == nil { s.viewMode = .four }
+                // The beat model knows the song's beats even where the drum analysis found none.
+                var r = r
+                if let mb = s.modelBeats, mb.count >= 16, r.bpm == nil {
+                    let ibi = zip(mb.dropFirst(), mb).map { $0 - $1 }.sorted()
+                    r.bpm = 60 / ibi[ibi.count / 2]
+                    r.downbeat = s.modelDownbeats?.first ?? mb[0]
+                }
                 if let bpm = r.bpm, let db = r.downbeat {
                     s.bpm = bpm; s.downbeat = db
                     s.autoBpm = bpm; s.autoDownbeat = db
@@ -413,11 +448,10 @@ final class Library: ObservableObject {
                     s.state = .ready
                     s.error = "No beat found, set the grid by hand"
                 }
-            }
-            if self.selected?.isReady != true { self.selectedID = id }
-            if self.freshlySeparated.remove(id) != nil { Celebrate.shared.songSeparated(id) }
-            self.processNext()
         }
+        if selected?.isReady != true { selectedID = id }
+        if freshlySeparated.remove(id) != nil { Celebrate.shared.songSeparated(id) }
+        processNext()
     }
 }
 
@@ -466,7 +500,7 @@ enum PythonRunner {
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: path)
-            p.arguments = ["-c", "import demucs, librosa, soundfile"]
+            p.arguments = ["-c", "import demucs, librosa, soundfile, beat_this"]
             p.standardOutput = FileHandle.nullDevice
             p.standardError = FileHandle.nullDevice
             do { try p.run() } catch { continue }

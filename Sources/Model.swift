@@ -98,6 +98,9 @@ struct Song: Codable, Identifiable, Equatable {
     /// AUTO WARP has run once for this song.
     var autoWarped: Bool?
 
+    /// Every beat and downbeat of the whole song from the beat model (seconds); the grid is built from them.
+    var modelBeats: [Double]?
+    var modelDownbeats: [Double]?
     /// The project file this song was last saved to / opened from.
     var projectPath: String?
     /// Lane levels, mutes and export marks from an opened project (applied when the song opens).

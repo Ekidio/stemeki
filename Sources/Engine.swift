@@ -11,6 +11,10 @@ enum Engine {
     static let modelFile = "955717e8-8726e21a.th"
     /// torch.hub checks the file against this prefix of its SHA-256.
     static let modelHashPrefix = "8726e21a"
+    /// The beat / downbeat model (Beat This!, JKU Linz, MIT), where its own loader looks for it.
+    static let beatModelURL = URL(string: "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt")!
+    static let beatModelFile = "beat_this-final0.ckpt"
+    static let beatModelSHA256 = "8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb8331"
     /// Native packages must come as ready-made wheels: no compiler on the user's Mac.
     static let binaryOnly = "torch,torchaudio,numpy,scipy,numba,llvmlite,soundfile,lameenc,scikit-learn,soxr,msgpack,pyyaml,cffi"
 
@@ -22,9 +26,14 @@ enum Engine {
     static var torchHome: URL { dir.appendingPathComponent("torch") }
 
     static var isInstalled: Bool {
-        FileManager.default.isExecutableFile(atPath: python.path)
-            && FileManager.default.fileExists(atPath: torchHome.appendingPathComponent("hub/checkpoints/\(modelFile)").path)
+        let cp = torchHome.appendingPathComponent("hub/checkpoints")
+        return hasBase
+            && FileManager.default.fileExists(atPath: cp.appendingPathComponent(modelFile).path)
+            && FileManager.default.fileExists(atPath: cp.appendingPathComponent(beatModelFile).path)
     }
+
+    /// An engine from an earlier STEMEKI: only the new parts (the beat finder) are missing.
+    static var hasBase: Bool { FileManager.default.isExecutableFile(atPath: python.path) }
 
     static func owns(python path: String) -> Bool { path.hasPrefix(dir.path + "/") }
 }
@@ -61,79 +70,104 @@ final class EngineInstaller: ObservableObject {
 
     private func install() async throws {
         let fm = FileManager.default
-        let partial = Engine.dir.deletingLastPathComponent().appendingPathComponent("Engine.partial")
-        try? fm.removeItem(at: partial)
-        try fm.createDirectory(at: partial, withIntermediateDirectories: true)
+        // An engine from an earlier STEMEKI is completed in place; a new one is built aside and moved in at the end.
+        let update = Engine.hasBase
+        let work = update ? Engine.dir : Engine.dir.deletingLastPathComponent().appendingPathComponent("Engine.partial")
+        if !update {
+            try? fm.removeItem(at: work)
+            try fm.createDirectory(at: work, withIntermediateDirectories: true)
+        }
 
         // Room for the download and the unpacked engine (about 1 GB).
-        if let free = try? partial.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-            .volumeAvailableCapacityForImportantUsage, free < 2_000_000_000 {
+        if let free = try? work.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage, free < (update ? 500_000_000 : 2_000_000_000) {
             throw EngineError("Not enough free disk space: the engine needs about 2 GB while installing.")
         }
 
         // 1. Python.
-        step = "STEP 1 / 4 · Downloading Python"
-        let archive = partial.appendingPathComponent("python.tar.gz")
-        try await Downloader.fetch(Engine.pythonURL, to: archive) { [weak self] f, got, total in
-            self?.fraction = 0.08 * f
-            self?.detail = Self.megabytes(got, total)
+        let python = work.appendingPathComponent("python/bin/python3")
+        if !fm.isExecutableFile(atPath: python.path) {
+            step = "STEP 1 / 5 · Downloading Python"
+            let archive = work.appendingPathComponent("python.tar.gz")
+            try await Downloader.fetch(Engine.pythonURL, to: archive) { [weak self] f, got, total in
+                self?.fraction = 0.08 * f
+                self?.detail = Self.megabytes(got, total)
+            }
+            guard try Self.sha256(archive) == Engine.pythonSHA256 else {
+                throw EngineError("The Python download is damaged (checksum mismatch). Please try again.")
+            }
+            detail = "Unpacking…"
+            try await Self.run("/usr/bin/tar", ["-xzf", archive.path, "-C", work.path])
+            try? fm.removeItem(at: archive)
+            _ = try? await Self.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", work.path])
         }
-        guard try Self.sha256(archive) == Engine.pythonSHA256 else {
-            throw EngineError("The Python download is damaged (checksum mismatch). Please try again.")
-        }
-        detail = "Unpacking…"
-        try await Self.run("/usr/bin/tar", ["-xzf", archive.path, "-C", partial.path])
-        try? fm.removeItem(at: archive)
-        _ = try? await Self.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", partial.path])
-        let python = partial.appendingPathComponent("python/bin/python3")
 
-        // 2. Demucs and friends, the exact versions STEMEKI is tested with.
-        step = "STEP 2 / 4 · Installing Demucs (the AI)"
+        // 2. Demucs, the beat finder and friends, the exact versions STEMEKI is tested with
+        //    (already installed ones are kept as they are).
+        step = "STEP 2 / 5 · Installing the AI"
         fraction = 0.1
         guard let requirements = Bundle.main.url(forResource: "engine-requirements", withExtension: "txt") else {
             throw EngineError("Missing engine-requirements.txt in the app.")
         }
         let total = Double((try? String(contentsOf: requirements, encoding: .utf8))?
-            .split(separator: "\n").filter { $0.contains("==") }.count ?? 48)
+            .split(separator: "\n").filter { $0.contains("==") }.count ?? 50)
         var collected = 0.0
         try await Self.run(python.path, ["-m", "pip", "install", "--no-cache-dir", "--prefer-binary",
                                          "--only-binary=\(Engine.binaryOnly)", "--disable-pip-version-check",
                                          "--no-warn-script-location", "-r", requirements.path],
                            env: ["PIP_NO_INPUT": "1"]) { [weak self] line in
             guard let self else { return }
-            if line.hasPrefix("Collecting ") {
+            if line.hasPrefix("Collecting ") || line.hasPrefix("Requirement already satisfied") {
                 collected += 1
-                self.detail = String(line.dropFirst(11)).components(separatedBy: " ").first ?? ""
-                self.fraction = 0.1 + 0.55 * min(1, collected / total)
+                self.detail = line.hasPrefix("Collecting ") ? (String(line.dropFirst(11)).components(separatedBy: " ").first ?? "") : "Checking…"
+                self.fraction = 0.1 + 0.5 * min(1, collected / total)
             } else if line.hasPrefix("Installing collected packages") {
                 self.detail = "Putting it all together…"
-                self.fraction = 0.7
+                self.fraction = 0.62
             }
         }
 
-        // 3. The trained model.
-        step = "STEP 3 / 4 · Downloading the separation model"
-        let checkpoints = partial.appendingPathComponent("torch/hub/checkpoints")
+        // 3. The trained models: separation, then beats.
+        let checkpoints = work.appendingPathComponent("torch/hub/checkpoints")
         try fm.createDirectory(at: checkpoints, withIntermediateDirectories: true)
         let model = checkpoints.appendingPathComponent(Engine.modelFile)
-        try await Downloader.fetch(Engine.modelURL, to: model) { [weak self] f, got, total in
-            self?.fraction = 0.72 + 0.2 * f
-            self?.detail = Self.megabytes(got, total)
+        if !fm.fileExists(atPath: model.path) {
+            step = "STEP 3 / 5 · Downloading the separation model"
+            try await Downloader.fetch(Engine.modelURL, to: model) { [weak self] f, got, total in
+                self?.fraction = 0.64 + 0.14 * f
+                self?.detail = Self.megabytes(got, total)
+            }
+            guard try Self.sha256(model).hasPrefix(Engine.modelHashPrefix) else {
+                try? fm.removeItem(at: model)
+                throw EngineError("The model download is damaged (checksum mismatch). Please try again.")
+            }
         }
-        guard try Self.sha256(model).hasPrefix(Engine.modelHashPrefix) else {
-            throw EngineError("The model download is damaged (checksum mismatch). Please try again.")
+        let beatModel = checkpoints.appendingPathComponent(Engine.beatModelFile)
+        if !fm.fileExists(atPath: beatModel.path) {
+            step = "STEP 4 / 5 · Downloading the beat model"
+            try await Downloader.fetch(Engine.beatModelURL, to: beatModel) { [weak self] f, got, total in
+                self?.fraction = 0.78 + 0.14 * f
+                self?.detail = Self.megabytes(got, total)
+            }
+            guard try Self.sha256(beatModel) == Engine.beatModelSHA256 else {
+                try? fm.removeItem(at: beatModel)
+                throw EngineError("The beat model download is damaged (checksum mismatch). Please try again.")
+            }
         }
 
-        // 4. Does it all load?
-        step = "STEP 4 / 4 · Testing the engine"
+        // 5. Does it all load?
+        step = "STEP 5 / 5 · Testing the engine"
         detail = "Loading the AI once…"
         fraction = 0.94
-        try await Self.run(python.path, ["-c", "import demucs, librosa, soundfile, torch; "
-                                         + "from demucs.pretrained import get_model; get_model('htdemucs')"],
-                           env: ["TORCH_HOME": partial.appendingPathComponent("torch").path])
+        try await Self.run(python.path, ["-c", "import demucs, librosa, soundfile, torch, beat_this; "
+                                         + "from demucs.pretrained import get_model; get_model('htdemucs'); "
+                                         + "from beat_this.inference import load_checkpoint; load_checkpoint('final0')"],
+                           env: ["TORCH_HOME": work.appendingPathComponent("torch").path])
 
-        try? fm.removeItem(at: Engine.dir)
-        try fm.moveItem(at: partial, to: Engine.dir)
+        if !update {
+            try? fm.removeItem(at: Engine.dir)
+            try fm.moveItem(at: work, to: Engine.dir)
+        }
         fraction = 1
         detail = "Ready"
     }
@@ -271,9 +305,11 @@ struct EngineSetupView: View {
         VStack(spacing: 18) {
             StemekiLogo(height: 44)
             Text("ONE-TIME SETUP").font(.system(size: 11, weight: .heavy)).tracking(3).foregroundColor(Theme.dim)
-            Text("STEMEKI needs its AI engine to split songs into stems.")
+            Text(Engine.hasBase ? "STEMEKI's engine gets the new beat finder." : "STEMEKI needs its AI engine to split songs into stems.")
                 .font(.system(size: 15, weight: .semibold))
-            Text("One click installs everything: no Terminal, no Python knowledge needed.\nAbout 300 MB download, 1 GB on disk. It runs on your Mac, your music never leaves it.")
+            Text(Engine.hasBase
+                 ? "One click adds it to the engine you have: about 85 MB. It finds every beat and the 1 of the whole song."
+                 : "One click installs everything: no Terminal, no Python knowledge needed.\nAbout 350 MB download, 1 GB on disk. It runs on your Mac, your music never leaves it.")
                 .font(.system(size: 12)).foregroundColor(Theme.dim)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
 
@@ -308,7 +344,7 @@ struct EngineSetupView: View {
                 }
                 .frame(width: 420)
             case .idle, .done:
-                installButton("INSTALL ENGINE")
+                installButton(Engine.hasBase ? "UPDATE ENGINE" : "INSTALL ENGINE")
             }
         }
         .padding(40)

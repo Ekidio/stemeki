@@ -759,9 +759,27 @@ final class Session: ObservableObject {
         return Onsets.nearest(onsets(for: nil), to: t, maxDist: maxDist)
     }
 
-    /// AUTO WARP: follow the hits from the 1 and pin every bar.
+    /// The grid from the beat model: straight lines where the song keeps one tempo, numbered from the model's
+    /// first downbeat (bar 1). nil without model beats, or before the hits are known.
+    private func modelMap() -> [BeatPoint]? {
+        guard let b = song?.modelBeats, let d = song?.modelDownbeats, !player.hits.isEmpty else { return nil }
+        return SmartTempo.map(beats: b, downbeats: d, hits: player.hits)
+    }
+
+    /// AUTO WARP: the grid from the beat model (or, without it, follow the drum hits from the 1).
+    /// `rephase`: the model's own 1; otherwise the 1 that is set now stays exactly where it is.
     func autoWarp(rephase: Bool = false) {
         guard let g = grid, !player.hits.isEmpty else { return }
+        if let pts = modelMap() {
+            if rephase {
+                setMap(pts)
+            } else {
+                let k = Grid(points: pts, bpm: g.bpm, duration: g.duration).beat(at: g.anchor)
+                setMap(pts.map { BeatPoint(beat: $0.beat - k, time: $0.time) })
+            }
+            if let id = song?.id { library.update(id) { $0.autoWarped = true } }
+            return
+        }
         // Track from the un-nudged 1, then put the nudge back on top.
         let shift = song?.contentShift ?? 0
         let base = Grid(points: g.points.map { BeatPoint(beat: $0.beat - shift, time: $0.time) }, bpm: g.bpm, duration: g.duration)
@@ -806,6 +824,11 @@ final class Session: ObservableObject {
     func resetGrid() {
         guard let s = song, let b = s.autoBpm, let d = s.autoDownbeat else { return }
         library.update(s.id) { $0.targetBpm = nil; $0.contentShift = nil }
+        if let pts = modelMap() {
+            checkpoint()
+            setMap(pts)
+            return
+        }
         setMap([BeatPoint(beat: 0, time: d)], bpm: b)
         autoWarp(rephase: true)
         autoCue(undoable: false)
@@ -863,6 +886,12 @@ final class Session: ObservableObject {
     /// Without markers: the beat line nearest to the first full drum hit.
     func autoCue(undoable: Bool = true) {
         guard let g = grid else { return }
+        // The beat model's first downbeat is the 1 (the grid is already numbered from it after AUTO WARP).
+        if song?.modelBeats != nil, let d = song?.modelDownbeats?.first {
+            let k = g.beat(at: d).rounded()
+            if abs(k) > 1e-9 { moveCue(toBeat: k, undoable: undoable) }
+            return
+        }
         if !player.hits.isEmpty, let first = firstDrumMarker(g) {
             if abs(first.beat) > 1e-9 { moveCue(toBeat: first.beat, undoable: undoable) }
             return
