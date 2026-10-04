@@ -306,6 +306,9 @@ struct Clip: Codable, Identifiable, Equatable {
     var start: Int
     var src: Int
     var len: Int
+    /// Fade-in / fade-out lengths in beats (0 = none).
+    var fadeIn: Double = 0
+    var fadeOut: Double = 0
 
     var end: Int { start + len }
 
@@ -313,7 +316,7 @@ struct Clip: Codable, Identifiable, Equatable {
         self.id = id; self.laneId = laneId; self.start = start; self.src = src; self.len = len
     }
 
-    private enum K: String, CodingKey { case id, laneId, startT, srcT, lenT, start, src, len, startBar, srcBar, bars }
+    private enum K: String, CodingKey { case id, laneId, startT, srcT, lenT, fadeIn, fadeOut, start, src, len, startBar, srcBar, bars }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -327,11 +330,22 @@ struct Clip: Codable, Identifiable, Equatable {
             src = (try c.decode(Int.self, forKey: .srcBar) - 1) * 16
             len = try c.decode(Int.self, forKey: .bars) * 16
         }
+        fadeIn = try c.decodeIfPresent(Double.self, forKey: .fadeIn) ?? 0
+        fadeOut = try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 0
     }
     func encode(to e: Encoder) throws {
         var c = e.container(keyedBy: K.self)
         try c.encode(id, forKey: .id); try c.encode(laneId, forKey: .laneId)
         try c.encode(start, forKey: .startT); try c.encode(src, forKey: .srcT); try c.encode(len, forKey: .lenT)
+        if fadeIn > 0 { try c.encode(fadeIn, forKey: .fadeIn) }
+        if fadeOut > 0 { try c.encode(fadeOut, forKey: .fadeOut) }
+    }
+
+    /// Keeps the fades inside the piece (together at most its length).
+    mutating func clampFades() {
+        let l = Double(len) / Double(ticksPerBeat)
+        fadeIn = max(0, min(fadeIn, l))
+        fadeOut = max(0, min(fadeOut, l - fadeIn))
     }
 }
 
@@ -340,6 +354,20 @@ struct Seg: Equatable, Sendable {
     var tl: Int
     var src: Int
     var len: Int
+    /// Fades at the run's start / end, in beats (from the piece it belongs to).
+    var fadeIn: Double = 0
+    var fadeOut: Double = 0
+
+    var hasFades: Bool { fadeIn > 0 || fadeOut > 0 }
+
+    /// Gain of the fades at position p (beats from bar 1) inside this run: a quarter-sine curve.
+    func fadeGain(_ p: Double) -> Float {
+        let s = Double(tl) / Double(ticksPerBeat), e = Double(tl + len) / Double(ticksPerBeat)
+        var g = 1.0
+        if fadeIn > 0 { let x = (p - s) / fadeIn; if x < 1 { g *= sin(max(0, x) * .pi / 2) } }
+        if fadeOut > 0 { let x = (e - p) / fadeOut; if x < 1 { g *= sin(max(0, x) * .pi / 2) } }
+        return Float(g)
+    }
 }
 
 extension Array where Element == Clip {
@@ -356,12 +384,13 @@ extension Array where Element == Clip {
                 for p in pieces {
                     guard p.start < k.end, p.end > k.start else { next.append(p); continue }
                     if p.start < k.start {                       // part before the overlap
-                        var a = p; a.len = k.start - p.start
+                        var a = p; a.len = k.start - p.start; a.fadeOut = 0; a.clampFades()
                         next.append(a)
                     }
                     if p.end > k.end {                           // part after it
                         var b = p; b.id = (p.start < k.start) ? UUID() : p.id
                         b.src = p.src + (k.end - p.start); b.start = k.end; b.len = p.end - k.end
+                        b.fadeIn = 0; b.clampFades()
                         next.append(b)
                     }
                 }
@@ -378,16 +407,22 @@ extension Array where Element == Clip {
         guard !list.isEmpty else { return nil }
         let lo = list.map(\.start).min()!, hi = list.map(\.end).max()!
         var segs: [Seg] = []
+        var owner: [Clip] = []   // the piece each run ends in
         for b in lo..<hi {
             guard let c = list.last(where: { b >= $0.start && b < $0.end }) else { continue }
             let src = b - c.start + c.src
-            if var last = segs.last, last.tl + last.len == b, last.src + last.len == src {
+            // Runs join across pieces only where no fade sits on the seam.
+            if var last = segs.last, last.tl + last.len == b, last.src + last.len == src,
+               owner[owner.count - 1].id == c.id || (owner[owner.count - 1].fadeOut == 0 && c.fadeIn == 0) {
                 last.len += 1
                 segs[segs.count - 1] = last
+                owner[owner.count - 1] = c
             } else {
-                segs.append(Seg(tl: b, src: src, len: 1))
+                segs.append(Seg(tl: b, src: src, len: 1, fadeIn: b == c.start ? c.fadeIn : 0))
+                owner.append(c)
             }
         }
+        for i in segs.indices where segs[i].tl + segs[i].len == owner[i].end { segs[i].fadeOut = owner[i].fadeOut }
         return segs
     }
 }
@@ -441,6 +476,14 @@ extension Grid {
         guard let segs else { return t }
         let b = beat(at: t)
         return sourceBeat(b, segs).map { time($0) }
+    }
+
+    /// Gain of the piece fades at timeline beat b (1 on an unedited lane or outside any fade).
+    func fadeGain(atBeat b: Double, _ segs: [Seg]?) -> Float {
+        guard let segs else { return 1 }
+        let p = b - firstBarBeat, k = p * Double(ticksPerBeat)
+        for s in segs where s.hasFades && k >= Double(s.tl) && k < Double(s.tl + s.len) { return s.fadeGain(p) }
+        return 1
     }
 
     /// Same in beats: the song beat heard at timeline beat b (nil = silence).

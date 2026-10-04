@@ -456,7 +456,9 @@ final class StemPlayer: ObservableObject {
             let a = max(tl0, from), b = min(tl1, to)
             guard b > a else { continue }
             let srcA = src0 + (a - tl0)
-            guard let piece = readBuffer(url: url, from: srcA, to: srcA + (b - a)), let p = piece.floatChannelData else { continue }
+            guard let piece = readBuffer(url: url, from: srcA, to: srcA + (b - a)) else { continue }
+            if sg.hasFades { applyFades(piece, sg, grid: g, startTime: Double(a) / sr) }
+            guard let p = piece.floatChannelData else { continue }
             let len = Int(b - a), off = Int(a - from)
             for c in 0..<ch {
                 for i in 0..<len {
@@ -470,6 +472,22 @@ final class StemPlayer: ObservableObject {
             }
         }
         return out
+    }
+
+    /// The piece's fade curve on a buffer that starts at timeline time `startTime` (only the fade zones are touched).
+    nonisolated static func applyFades(_ buf: AVAudioPCMBuffer, _ sg: Seg, grid g: Grid, startTime: Double) {
+        guard let d = buf.floatChannelData else { return }
+        let sr = buf.format.sampleRate, n = Int(buf.frameLength), ch = Int(buf.format.channelCount)
+        let sb = g.firstBarBeat + Double(sg.tl) / Double(ticksPerBeat)
+        let eb = g.firstBarBeat + Double(sg.tl + sg.len) / Double(ticksPerBeat)
+        let inEnd = sg.fadeIn > 0 ? g.time(sb + sg.fadeIn) : -Double.infinity
+        let outStart = sg.fadeOut > 0 ? g.time(eb - sg.fadeOut) : Double.infinity
+        for i in 0..<n {
+            let t = startTime + Double(i) / sr
+            guard t < inEnd || t >= outStart else { continue }
+            let gain = sg.fadeGain(g.pos(at: t))
+            for c in 0..<ch { d[c][i] *= gain }
+        }
     }
 
     /// Playback speed (1 = original). Pitch is kept.
@@ -602,19 +620,30 @@ final class StemPlayer: ObservableObject {
                     }
                     continue
                 }
-                // Each piece at its own place on the timeline; gaps stay silent.
+                // Each piece at its own place on the timeline; gaps stay silent. A piece with fades plays its
+                // fade zones from buffers with the curve on them, the rest straight from the file.
                 let fromT = Double(from) / sampleRate
                 for sg in edited {
                     let tl0 = g.tickTime(sg.tl), tl1 = g.tickTime(sg.tl + sg.len)
                     guard tl1 > fromT else { continue }
-                    let off = max(0, fromT - tl0)
-                    var at = tl0 + off
-                    var sf = frame(g.tickTime(sg.src) + off)
-                    let ef = min(frame(g.tickTime(sg.src + sg.len)), file.length)
-                    if sf < 0 { at += Double(-sf) / sampleRate; sf = 0 }
-                    guard ef > sf else { continue }
-                    let when = AVAudioTime(sampleTime: AVAudioFramePosition(((at - fromT) * sampleRate).rounded()), atRate: sampleRate)
-                    node.scheduleSegment(file, startingFrame: sf, frameCount: AVAudioFrameCount(ef - sf), at: when)
+                    let srcT = g.tickTime(sg.src)
+                    let inEnd = sg.fadeIn > 0 ? min(tl1, g.time(g.firstBarBeat + Double(sg.tl) / Double(ticksPerBeat) + sg.fadeIn)) : tl0
+                    let outStart = sg.fadeOut > 0
+                        ? max(inEnd, g.time(g.firstBarBeat + Double(sg.tl + sg.len) / Double(ticksPerBeat) - sg.fadeOut)) : tl1
+                    for (a, b, faded) in [(tl0, inEnd, true), (inEnd, outStart, false), (outStart, tl1, true)] where b > a && b > fromT {
+                        var at = max(a, fromT)
+                        var sf = frame(srcT + (at - tl0))
+                        let ef = min(frame(srcT + (b - tl0)), file.length)
+                        if sf < 0 { at += Double(-sf) / sampleRate; sf = 0 }
+                        guard ef > sf else { continue }
+                        let when = AVAudioTime(sampleTime: AVAudioFramePosition(((at - fromT) * sampleRate).rounded()), atRate: sampleRate)
+                        if faded, let url = urls[kind], let buf = Self.readBuffer(url: url, from: sf, to: ef) {
+                            Self.applyFades(buf, sg, grid: g, startTime: at)
+                            node.scheduleBuffer(buf, at: when, options: [])
+                        } else {
+                            node.scheduleSegment(file, startingFrame: sf, frameCount: AVAudioFrameCount(ef - sf), at: when)
+                        }
+                    }
                 }
             }
             if let c = clickSlice(from: from, to: total) { clickNode.scheduleBuffer(c, at: nil, options: []) }

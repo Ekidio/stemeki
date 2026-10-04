@@ -418,6 +418,10 @@ final class Session: ObservableObject {
                 p.src = c.src + (cuts[k] - c.start)
                 p.start = cuts[k]
                 p.len = cuts[k + 1] - cuts[k]
+                // Each piece keeps only the fades of the outer edges it still has.
+                if cuts[k] > c.start { p.fadeIn = 0 }
+                if cuts[k + 1] < c.end { p.fadeOut = 0 }
+                p.clampFades()
                 out.append(p)
                 if k == 1 { inside.append(p.id) }
             }
@@ -563,6 +567,22 @@ final class Session: ObservableObject {
             ne = min(ne, c.start + (songHi - c.src))            // nor after it
             c.len = ne - c.start
         }
+        c.clampFades()
+        guard list[i] != c else { return }
+        list[i] = c
+        storeClips(list)
+    }
+
+    /// A piece's fade-in / fade-out (beats), from its `base` state; nil leaves that side alone.
+    func setFades(_ base: Clip, fadeIn: Double? = nil, fadeOut: Double? = nil) {
+        var list = allClips
+        guard let i = list.firstIndex(where: { $0.id == base.id }) else { return }
+        var c = list[i]
+        if let f = fadeIn { c.fadeIn = f }
+        if let f = fadeOut { c.fadeOut = f }
+        // The side being dragged gives way to the other one.
+        let l = Double(c.len) / Double(ticksPerBeat)
+        if fadeIn != nil { c.fadeIn = max(0, min(c.fadeIn, l - c.fadeOut)) } else { c.fadeOut = max(0, min(c.fadeOut, l - c.fadeIn)) }
         guard list[i] != c else { return }
         list[i] = c
         storeClips(list)

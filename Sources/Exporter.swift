@@ -209,6 +209,14 @@ enum Exporter {
                 guard let sb = g.sourceBeat(ob, segs) else { return nil }
                 return (g.time(sb) - inStart) * stemRate
             }
+            // The pieces' fades, on the output's beats.
+            if let segs, segs.contains(where: \.hasFades), let d = stretched.floatChannelData {
+                let sr = stretched.format.sampleRate
+                for o in 0..<Int(stretched.frameLength) {
+                    let gain = g.fadeGain(atBeat: beat0 + Double(o) / sr * job.targetBpm / 60, segs)
+                    if gain < 1 { for c in 0..<Int(stretched.format.channelCount) { d[c][o] *= gain } }
+                }
+            }
             add(stretched, 1)
         }
         guard let total else { throw ExportError.read }

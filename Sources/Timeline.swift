@@ -127,6 +127,7 @@ struct TimelineCanvas: View {
             let half = laneH / 2 - 6
             let on = audible[lane.id] ?? true
             let laneSegs = segs[lane.id]
+            let laneFades = laneSegs?.contains(where: \.hasFades) == true
             // The MIX lane draws the real summed waveform once it is ready.
             let sources = lane.id == Lane.full.id && mixPeaks != nil ? [mixPeaks!] : lane.stems.compactMap { peaks[$0] }
             guard let first = sources.first else { continue }
@@ -175,6 +176,11 @@ struct TimelineCanvas: View {
                     }
                 }
                 if !any { lo = 0; hi = 0; rm = 0 }
+                // Under a fade the waveform shrinks the way it will sound.
+                if laneFades, let g = grid {
+                    let fg = g.fadeGain(atBeat: g.beat(at: tl), laneSegs)
+                    lo *= fg; hi *= fg; rm *= fg
+                }
                 let yTop = mid - max(0.25, CGFloat(min(hi, norm)) * scale)
                 let yBot = mid - min(-0.25, CGFloat(max(lo, -norm)) * scale)
                 tops.append(CGPoint(x: x, y: yTop))
@@ -258,6 +264,43 @@ struct TimelineCanvas: View {
                 if sel { ctx.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(Color.white.opacity(0.08))) }
                 ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 3),
                            with: .color(sel ? Color.white : lane.color.opacity(0.55)), lineWidth: sel ? 2 : 1)
+                // Fades: the faded part darkened above a quarter-sine curve, and (EDIT) a handle on each top corner.
+                let sb = g.firstBarBeat + Double(c.start) / Double(ticksPerBeat)
+                let eb = g.firstBarBeat + Double(c.end) / Double(ticksPerBeat)
+                let fi = x(g.time(sb + c.fadeIn), w), fo = x(g.time(eb - c.fadeOut), w)
+                func fade(_ from: CGFloat, _ to: CGFloat, rising: Bool) {
+                    guard abs(to - from) > 0.5 else { return }
+                    var curve = Path(), shade = Path()
+                    shade.move(to: CGPoint(x: from, y: rect.minY))
+                    for k in 0...32 {
+                        let u = CGFloat(k) / 32
+                        let gain = sin(Double(rising ? u : 1 - u) * .pi / 2)
+                        let pt = CGPoint(x: from + (to - from) * u, y: rect.maxY - CGFloat(gain) * rect.height)
+                        if k == 0 { curve.move(to: pt) } else { curve.addLine(to: pt) }
+                        shade.addLine(to: pt)
+                    }
+                    shade.addLine(to: CGPoint(x: to, y: rect.minY))
+                    shade.closeSubpath()
+                    ctx.fill(shade, with: .color(.black.opacity(0.38)))
+                    ctx.stroke(curve, with: .color(.white.opacity(0.85)), lineWidth: 1.2)
+                }
+                if c.fadeIn > 0 { fade(x0, fi, rising: true) }
+                if c.fadeOut > 0 { fade(fo, x1, rising: false) }
+                if editMarks, x1 - x0 > 24 {
+                    for (hx, on) in [(fi, c.fadeIn > 0), (fo, c.fadeOut > 0)] {
+                        let hxx = max(x0 + 1, min(x1 - 8, hx - 3.5))
+                        let h = CGRect(x: hxx, y: rect.minY + 1, width: 7, height: 7)
+                        ctx.fill(Path(roundedRect: h, cornerRadius: 1.5), with: .color(on || sel ? .white : lane.color.opacity(0.8)))
+                    }
+                    if sel {
+                        for (hx, f, right) in [(fi, c.fadeIn, false), (fo, c.fadeOut, true)] where f > 0 {
+                            let ms = (right ? g.time(eb) - g.time(eb - f) : g.time(sb + f) - g.time(sb)) * 1000
+                            let label = ms >= 1000 ? String(format: "%.2f s", ms / 1000) : String(format: "%.0f ms", ms)
+                            ctx.draw(Text(label).font(Theme.mono(9, .bold)).foregroundColor(.white),
+                                     at: CGPoint(x: hx + (right ? -6 : 6), y: rect.minY + 16), anchor: right ? .trailing : .leading)
+                        }
+                    }
+                }
             }
         }
 
@@ -444,6 +487,7 @@ struct TimelineInteraction: NSViewRepresentable {
             case cue                                           // dragging the CUE flag
             case trimStart(Double, Clip)                       // EDIT: a piece's start edge
             case trimEnd(Double, Clip)                         // EDIT: a piece's end edge
+            case fade(Clip, Bool)                              // EDIT: a piece's fade-in (true) / fade-out handle
         }
 
         private var drag: Drag = .none
@@ -507,6 +551,7 @@ struct TimelineInteraction: NSViewRepresentable {
         }
 
         func cursor(at p: CGPoint, size: CGSize) -> NSCursor {
+            if fadeHandle(p, size) != nil { return .pointingHand }
             switch hit(p, size) {
             case .startEdge, .endEdge: return .resizeLeftRight
             case .inside(.region, _, _): return NSEvent.modifierFlags.contains(.option) ? .dragCopy : .pointingHand
@@ -548,6 +593,18 @@ struct TimelineInteraction: NSViewRepresentable {
             downMods = mods
             let t = time(p.x, size.width)
             guard let g = session.grid else { session.player.seek(t); drag = .scrub; return }
+            // A fade handle on a piece's top corner: drag to set the fade, double-click to remove it.
+            if let (c, isIn) = fadeHandle(p, size) {
+                session.checkpoint()
+                session.selected = [c.id]
+                if clicks == 2 {
+                    isIn ? session.setFades(c, fadeIn: 0) : session.setFades(c, fadeOut: 0)
+                    drag = .none
+                } else {
+                    drag = .fade(c, isIn)
+                }
+                return
+            }
             let h = hit(p, size)
             if clicks == 2 {
                 if p.y < rulerHeight {
@@ -686,6 +743,14 @@ struct TimelineInteraction: NSViewRepresentable {
                 session.moveClips(base, ticks: delta(t0, unit(nil, size)))
             case .cue:
                 session.cueGhost = g.time(cueTarget(t, size))
+            case .fade(let c, let isIn):
+                // Free (not snapped): fades are by ear.
+                let b = g.beat(at: t)
+                if isIn {
+                    session.setFades(c, fadeIn: max(0, b - (g.firstBarBeat + Double(c.start) / Double(ticksPerBeat))))
+                } else {
+                    session.setFades(c, fadeOut: max(0, g.firstBarBeat + Double(c.end) / Double(ticksPerBeat) - b))
+                }
             case .trimStart(_, let c):
                 let u = unit(nil, size)
                 session.trimClip(c, start: snap(t, u))
@@ -754,6 +819,26 @@ struct TimelineInteraction: NSViewRepresentable {
                 guard x1 - x0 > 14 else { continue }
                 if abs(p.x - x0) < 5 { return (c, true) }
                 if abs(p.x - x1) < 5 { return (c, false) }
+            }
+            return nil
+        }
+
+        /// EDIT: a fade handle (top corner square of a piece) under the mouse; true = fade-in.
+        private func fadeHandle(_ p: CGPoint, _ size: CGSize) -> (Clip, Bool)? {
+            guard session.workMode == .edit, let g = session.grid, let li = laneIndex(at: p, size) else { return nil }
+            let lane = session.lanes[li]
+            let top = rulerHeight + CGFloat(li) * laneHeight(size) + 2
+            guard p.y >= top - 2, p.y <= top + 13 else { return nil }
+            let mine = session.clips.filter { $0.laneId == lane.id }
+            for c in mine.filter({ session.selected.contains($0.id) }) + mine.reversed() {
+                let x0 = xOf(g.tickTime(c.start), size.width), x1 = xOf(g.tickTime(c.end), size.width)
+                guard x1 - x0 > 24 else { continue }
+                let sb = g.firstBarBeat + Double(c.start) / Double(ticksPerBeat)
+                let eb = g.firstBarBeat + Double(c.end) / Double(ticksPerBeat)
+                let fi = max(x0 + 4.5, min(x1 - 4.5, xOf(g.time(sb + c.fadeIn), size.width)))
+                let fo = max(x0 + 4.5, min(x1 - 4.5, xOf(g.time(eb - c.fadeOut), size.width)))
+                if abs(p.x - fi) <= 6 { return (c, true) }
+                if abs(p.x - fo) <= 6 { return (c, false) }
             }
             return nil
         }
