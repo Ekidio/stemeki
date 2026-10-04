@@ -137,7 +137,7 @@ final class Session: ObservableObject {
         if let g = song.grid {
             // About 16 bars on screen, with clear space before the CUE.
             viewLength = min(d, g.bar * 16)
-            viewStart = clampView(g.anchor - g.bar * 2)
+            viewStart = clampView(g.anchor - g.bar)
         } else {
             viewLength = min(d, 30)
             viewStart = 0
@@ -652,11 +652,11 @@ final class Session: ObservableObject {
     /// Playhead to the very start; with FOLLOW the view goes there too.
     func goToStart() {
         player.seek(0)
-        if follow { viewStart = clampView(min(0, (grid?.anchor ?? 0) - (grid?.bar ?? 2) * 2)) }
+        if follow { viewStart = clampView(min(0, (grid?.anchor ?? 0) - (grid?.bar ?? 2))) }
     }
 
-    /// Empty space allowed before the song starts (and after it ends), so the start is never squeezed.
-    var preRoll: Double { (grid?.bar ?? 2) * 2 }
+    /// Empty space allowed before the song starts (one bar: bar 0), so the start is never squeezed.
+    var preRoll: Double { grid?.bar ?? 2 }
 
     func clampView(_ s: Double) -> Double {
         max(-preRoll, min(s, max(-preRoll, duration - viewLength + preRoll)))
