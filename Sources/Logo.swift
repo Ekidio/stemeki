@@ -20,21 +20,30 @@ struct StemekiLogo: View {
                      ekiScale: CGFloat = 1, stemOffset: CGFloat = 0, stemOpacity: Double = 1) {
         let h = rect.height
         let skew = CGAffineTransform(a: 1, b: 0, c: -0.25, d: 1, tx: 0, ty: 0)
-        // "STEM"
-        var s = ctx
-        s.opacity = stemOpacity
-        s.draw(Text("STEM").font(.system(size: h * 0.92, weight: .black).italic()).foregroundColor(.white),
-               at: CGPoint(x: rect.minX + h * 1.72 + stemOffset, y: rect.midY + h * 0.02), anchor: .trailing)
-        // Badge
+        // Measure "STEM" and lay the logo out from the left edge; shrink it if it would not fit.
+        let stemText = ctx.resolve(Text("STEM").font(.system(size: h * 0.92, weight: .black).italic()).foregroundColor(.white))
+        let stemW = stemText.measure(in: CGSize(width: 10_000, height: 10_000)).width
+        let gap = h * 0.16
         let bw = h * 1.62, bh = h * 0.86
-        let bx = rect.minX + h * 1.86, by = rect.midY - bh / 2
-        var sh = ctx
+        let total = stemW + gap + bw + bh * 0.25 + h * 0.1
+        let k = min(1, rect.width / total)
+        var g = ctx
+        g.translateBy(x: rect.minX + (rect.width - total * k) / 2, y: rect.midY)
+        g.scaleBy(x: k, y: k)
+
+        // "STEM"
+        var s = g
+        s.opacity = stemOpacity
+        s.draw(stemText, at: CGPoint(x: stemOffset, y: h * 0.02), anchor: .leading)
+        // Badge (its left edge right after STEM; the skew leans the top to the right).
+        let bx = stemW + gap, by = -bh / 2
+        var sh = g
         sh.opacity = bandsOpacity.min() ?? 1
         sh.translateBy(x: bx + bh / 2 * 0.25 + h * 0.07, y: by + h * 0.07)
         sh.concatenate(skew)
         sh.fill(Path(CGRect(x: 0, y: 0, width: bw, height: bh)), with: .color(.white))
         for i in 0..<4 {
-            var b = ctx
+            var b = g
             b.opacity = bandsOpacity[i]
             b.translateBy(x: bx + bh / 2 * 0.25, y: by + CGFloat(i) * bh / 4)
             b.concatenate(skew)
@@ -44,8 +53,8 @@ struct StemekiLogo: View {
             // The band's waveform.
             var wave = Path()
             let n = 26
-            for k in 0..<n {
-                let u = Double(k) / Double(n)
+            for j in 0..<n {
+                let u = Double(j) / Double(n)
                 let ph = u * 14 + Double(i) * 1.3 - phase * (1.6 + Double(i) * 0.35)
                 let env = 0.25 + 0.75 * abs(sin(ph) * cos(ph * 0.37 + Double(i)))
                 let wh = CGFloat(env) * bh / 8 * 0.85
@@ -54,8 +63,8 @@ struct StemekiLogo: View {
             b.fill(wave, with: .color(.white.opacity(0.4)))
         }
         // "EKI"
-        var e = ctx
-        e.translateBy(x: bx + bw / 2 + h * 0.06, y: by + bh / 2 + h * 0.02)
+        var e = g
+        e.translateBy(x: bx + bw / 2 + h * 0.06, y: h * 0.02)
         e.scaleBy(x: ekiScale, y: ekiScale)
         e.addFilter(.shadow(color: .black.opacity(0.35), radius: h * 0.03, x: h * 0.02, y: h * 0.03))
         e.draw(Text("EKI").font(.system(size: h * 0.8, weight: .black).italic()).foregroundColor(.white), at: .zero, anchor: .center)
