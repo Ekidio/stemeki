@@ -101,7 +101,14 @@ struct TransportCard: View {
                         }
                         .buttonStyle(PillButtonStyle(color: Theme.loop, active: session.clickOn, small: true))
                         .keyboardShortcut("k", modifiers: [])
-                        .help("Metronome on the beat grid, higher click on the 1 (K)")
+                        .help("Metronome on the beat grid, higher click on the 1 (K). Right-click: fine timing.")
+                        .contextMenu {
+                            ForEach([-10.0, -6, -4, -2, 0, 2, 4, 6, 10], id: \.self) { ms in
+                                Button((ms == player.clickOffsetMs ? "✓ " : "") + (ms == 0 ? "On the grid (0 ms)" : String(format: "%+.0f ms", ms))) {
+                                    player.clickOffsetMs = ms
+                                }
+                            }
+                        }
                     }
                 }
             }

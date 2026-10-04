@@ -378,6 +378,14 @@ final class StemPlayer: ObservableObject {
 
     // MARK: Metronome and warp
 
+    /// Fine timing of the click by ear (ms, negative = earlier).
+    var clickOffsetMs: Double = UserDefaults.standard.double(forKey: "clickOffsetMs") {
+        didSet {
+            UserDefaults.standard.set(clickOffsetMs, forKey: "clickOffsetMs")
+            if let g = clickGrid { buildClickTrack(g); if isPlaying { start(at: currentPosition()) } }
+        }
+    }
+
     func setClick(_ on: Bool) {
         clickOn = on
         clickNode.volume = on ? 0.55 : 0
@@ -450,17 +458,23 @@ final class StemPlayer: ObservableObject {
         buf.frameLength = total
         let ch = Int(format.channelCount)
         for c in 0..<ch { data[c].update(repeating: 0, count: Int(total)) }
-        let clickLen = Int(0.03 * sampleRate)
+        // A tight "tick": an instant noise burst for the attack plus a short, bright tone body,
+        // peaking in the very first samples (no soft swell), gone in ~12 ms.
+        let clickLen = Int(0.014 * sampleRate)
+        var rng = SystemRandomNumberGenerator()
         func click(_ freq: Double, _ amp: Float) -> [Float] {
             (0..<clickLen).map { i in
                 let t = Double(i) / sampleRate
-                return amp * Float(sin(2 * .pi * freq * t) * exp(-t * 140))
+                let body = cos(2 * .pi * freq * t) * exp(-t * 380)           // starts at full level
+                let tick = Double.random(in: -1...1, using: &rng) * exp(-t * 2600)
+                return amp * Float(body * 0.75 + tick * 0.5)
             }
         }
-        let hi = click(1760, 0.9), lo = click(1180, 0.6)
+        let hi = click(2500, 0.95), lo = click(1700, 0.6)
+        let shift = clickOffsetMs / 1000
         var b = floor(g.beat(at: 0))
         while true {
-            let t = g.time(b)
+            let t = g.time(b) + shift
             if t >= duration { break }
             let start = Int((t * sampleRate).rounded())
             let isOne = ((Int((b - g.firstBarBeat).rounded()) % 4) + 4) % 4 == 0
