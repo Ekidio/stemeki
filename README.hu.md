@@ -74,11 +74,8 @@ A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen
 
 ## Követelmények
 - Apple Silicon Mac, macOS 14 vagy újabb.
-- Python 3.10+ a Demucs 4, librosa és soundfile csomagokkal:
-  ```bash
-  pip install demucs librosa soundfile
-  ```
-  A STEMEKI magától megtalálja (pyenv, Homebrew vagy a rendszer Pythonja).
+- Más semmi. Első indításkor a STEMEKI felajánlja az **INSTALL ENGINE** gombot: egy kattintással letölti a saját AI-motorját (Python + Demucs 4 + a modell, kb. 300 MB, a lemezen 1 GB) a `~/Library/Application Support/STEMEKI` mappába. Nem kell hozzá Terminál, sem Python-tudás.
+- Van már Python 3.10+ `demucs librosa soundfile` csomagokkal? A STEMEKI megtalálja és azt használja (pyenv, Homebrew vagy a rendszer Pythonja), nincs telepítés.
 
 ## Telepítés
 1. Töltsd le a DMG-t a [legújabb kiadásból](https://github.com/Ekidio/stemeki/releases/latest), és húzd a **STEMEKI**-t az Alkalmazások mappába.

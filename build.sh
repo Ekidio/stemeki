@@ -60,7 +60,7 @@ else
     echo "  (release.conf: GITHUB_REPO üres → automatikus frissítés kikapcsolva)"
 fi
 cp "$ICON_DIR/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
-cp Resources/*.py "$APP/Contents/Resources/"
+cp Resources/*.py Resources/engine-requirements.txt "$APP/Contents/Resources/"
 
 echo "→ Aláírás (ad-hoc)"
 codesign --force --deep --sign - "$APP"

@@ -74,11 +74,8 @@ Most stem splitters stop at "here are four files". STEMEKI goes on:
 
 ## Requirements
 - A Mac with Apple Silicon, macOS 14 or later.
-- Python 3.10+ with Demucs 4, librosa and soundfile:
-  ```bash
-  pip install demucs librosa soundfile
-  ```
-  STEMEKI finds it automatically (pyenv, Homebrew or the system Python).
+- Nothing else. At the first start STEMEKI offers **INSTALL ENGINE**: one click downloads its own AI engine (Python + Demucs 4 + the model, about 300 MB, 1 GB on disk) into `~/Library/Application Support/STEMEKI`. No Terminal, no Python knowledge needed.
+- Already have Python 3.10+ with `demucs librosa soundfile`? STEMEKI finds and uses it (pyenv, Homebrew or the system Python), no setup needed.
 
 ## Install
 1. Download the DMG from the [latest release](https://github.com/Ekidio/stemeki/releases/latest) and drag **STEMEKI** into Applications.

@@ -52,7 +52,7 @@ rgb(1, 1, 1, 0.1).setStroke(); let border = NSBezierPath(roundedRect: card.inset
 let steps: [(String, String)] = [
     ("1", "Drag STEMEKI into the Applications folder."),
     ("2", "Open it. If the Mac does not let it start, click “Done”, then:\nSystem Settings → Privacy & Security → scroll down →\n“Open Anyway”. This is needed only once."),
-    ("3", "Drop a song on the window. STEMEKI needs Demucs 4 (Python) on this Mac."),
+    ("3", "First time: click INSTALL ENGINE once, then drop a song on the window."),
 ]
 var top: CGFloat = 288
 for (i, (number, body)) in steps.enumerated() {

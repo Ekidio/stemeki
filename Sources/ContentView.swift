@@ -19,6 +19,8 @@ struct ContentView: View {
                 Group {
                     if let song = library.selected, song.isReady {
                         EditorView(player: session.player)
+                    } else if library.needsEngine {
+                        EngineSetupView()
                     } else if let song = library.selected {
                         ProcessingView(song: song)
                     } else {
@@ -104,12 +106,6 @@ struct SidebarView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 14)
-
-            if let problem = library.pythonProblem {
-                Text(problem).font(.system(size: 11)).foregroundColor(.orange)
-                    .padding(10).background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
-                    .padding(.horizontal, 12).padding(.bottom, 8)
-            }
 
             ScrollView {
                 LazyVStack(spacing: 4) {

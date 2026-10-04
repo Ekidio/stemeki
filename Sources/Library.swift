@@ -10,7 +10,8 @@ final class Library: ObservableObject {
     @Published private(set) var songs: [Song] = []
     @Published var selectedID: UUID?
     @Published private(set) var progress: [UUID: Double] = [:]
-    @Published private(set) var pythonProblem: String?
+    /// No Python with Demucs on this Mac: the setup screen offers STEMEKI's own engine.
+    @Published private(set) var needsEngine = false
 
     let root: URL
     private var running: Process?
@@ -26,9 +27,7 @@ final class Library: ObservableObject {
             songs[i].state = .queued
         }
         python = PythonRunner.findPython()
-        if python == nil {
-            pythonProblem = "No Python with Demucs found. Install it: pip install demucs librosa soundfile"
-        }
+        needsEngine = python == nil
         selectedID = songs.first(where: { $0.isReady })?.id
         processNext()
     }
@@ -192,6 +191,16 @@ final class Library: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([stemsDir(song)])
     }
 
+    /// One click: download and set up the engine, then work through the waiting songs.
+    func installEngine() {
+        EngineInstaller.shared.start { [weak self] path in
+            guard let self else { return }
+            self.python = path
+            self.needsEngine = false
+            self.processNext()
+        }
+    }
+
     // MARK: Queue
 
     private func processNext() {
@@ -216,7 +225,22 @@ final class Library: ObservableObject {
         progress[id] = 0
         let tmp = stemsDir(song).appendingPathComponent("tmp")
         try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        running = PythonRunner.run(python: python, script: "separate", args: [song.sourcePath, tmp.path]) { [weak self] line in
+        // Without ffmpeg, Demucs reads only WAV/AIFF/FLAC: macOS decodes the rest (MP3, M4A…) first.
+        var input = song.sourcePath
+        if !PythonRunner.hasFFmpeg,
+           !["wav", "wave", "aif", "aiff", "flac"].contains(URL(fileURLWithPath: input).pathExtension.lowercased()) {
+            let wav = tmp.appendingPathComponent("source.wav")
+            do {
+                try AudioDecode.toWAV(URL(fileURLWithPath: input), wav)
+                input = wav.path
+            } catch {
+                update(id) { $0.state = .failed; $0.error = "Could not read this file: \(error.localizedDescription)" }
+                progress[id] = nil
+                processNext()
+                return
+            }
+        }
+        running = PythonRunner.run(python: python, script: "separate", args: [input, tmp.path]) { [weak self] line in
             if line.hasPrefix("PROGRESS "), let v = Double(line.dropFirst(9)) {
                 self?.progress[id] = v * 0.9
             }
@@ -299,7 +323,11 @@ private struct AnalysisResult: Decodable {
 
 /// Runs the bundled Python scripts with the Demucs-capable interpreter.
 enum PythonRunner {
+    /// Testing: STEMEKI_OWN_ENGINE=1 ignores every other Python (and ffmpeg), like on a fresh Mac.
+    static let ownEngineOnly = ProcessInfo.processInfo.environment["STEMEKI_OWN_ENGINE"] == "1"
+
     static func findPython() -> String? {
+        if ownEngineOnly { return Engine.isInstalled ? Engine.python.path : nil }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var candidates = [
             "\(home)/.pyenv/versions/3.10.13/bin/python3",
@@ -308,6 +336,8 @@ enum PythonRunner {
             candidates += versions.sorted().reversed().map { "\(home)/.pyenv/versions/\($0)/bin/python3" }
         }
         candidates += ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
+        // STEMEKI's own engine (one-click setup) last: a working Python of the user's own comes first.
+        if Engine.isInstalled { candidates.append(Engine.python.path) }
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: path)
@@ -337,6 +367,8 @@ enum PythonRunner {
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "/usr/bin:/bin")
         env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
+        // The own engine keeps its model next to itself.
+        if Engine.owns(python: python) { env["TORCH_HOME"] = Engine.torchHome.path }
         p.environment = env
 
         let out = Pipe(), err = Pipe()
@@ -374,6 +406,10 @@ enum PythonRunner {
         return p
     }
 
+    static var hasFFmpeg: Bool {
+        !ownEngineOnly && ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"].contains { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
     static func lastError(_ log: String) -> String {
         let lines = log.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         if let json = lines.last(where: { $0.hasPrefix("{") }), json.contains("\"error\"") { return json }
@@ -382,7 +418,7 @@ enum PythonRunner {
 }
 
 /// Thread-safe collector for a child process's output.
-private final class LogBuffer: @unchecked Sendable {
+final class LogBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var partial = ""
     private var text = ""
@@ -404,5 +440,28 @@ private final class LogBuffer: @unchecked Sendable {
     var all: String {
         lock.lock(); defer { lock.unlock() }
         return text
+    }
+}
+
+/// Decodes any file macOS can read (MP3, M4A, …) to a 32-bit float WAV at its own sample rate.
+enum AudioDecode {
+    static func toWAV(_ src: URL, _ dst: URL) throws {
+        let input = try AVAudioFile(forReading: src)
+        let format = input.processingFormat
+        try? FileManager.default.removeItem(at: dst)
+        let output = try AVAudioFile(forWriting: dst, settings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: format.sampleRate,
+            AVNumberOfChannelsKey: format.channelCount,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false,
+        ], commonFormat: format.commonFormat, interleaved: format.isInterleaved)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1 << 16) else { return }
+        while input.framePosition < input.length {
+            try input.read(into: buffer)
+            if buffer.frameLength == 0 { break }
+            try output.write(from: buffer)
+        }
     }
 }
