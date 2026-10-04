@@ -129,11 +129,11 @@ struct SidebarView: View {
 
             Spacer(minLength: 0)
             Button {
-                NSWorkspace.shared.open(library.loopsDir.path.isEmpty ? library.root : library.loopsDir)
+                NSWorkspace.shared.open(library.exportFolder)
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "folder")
-                    Text("Loops folder").font(.system(size: 11, weight: .medium))
+                    Text("Export folder").font(.system(size: 11, weight: .medium))
                     Spacer()
                 }
                 .foregroundColor(Theme.dim)

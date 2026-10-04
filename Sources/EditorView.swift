@@ -45,7 +45,7 @@ struct EditorView: View {
         return ZStack {
             TimelineCanvas(lanes: lanes, audible: audible, peaks: player.peaks, mixPeaks: player.mixPeaks, grid: song?.grid,
                            loopRange: session.loopRange, loopOn: session.loopEnabled, loopLabel: loopLabel,
-                           drumStart: song?.drumStart, regions: session.regions, cueGhost: session.cueGhost, selected: session.selected,
+                           drumStart: song?.drumStart, regions: session.regions, editMarks: session.workMode == .edit, cueGhost: session.cueGhost, selected: session.selected,
                            clips: session.clips, segs: laneSegs,
                            viewStart: session.viewStart, viewLength: session.viewLength)
             PlayheadLayer(clock: player.clock, viewStart: session.viewStart, viewLength: session.viewLength)
@@ -119,6 +119,7 @@ struct HeaderBar: View {
                     .buttonStyle(PillButtonStyle(color: Theme.text, small: true))
                 }
             }
+            ModeSwitch()
             Segmented(options: StemMode.allCases, selection: $session.mode) { $0.label }
                 .help("MIX: the whole song as one waveform — set the CUE point here. 2/4 STEMS: the separated lanes.")
         }
@@ -285,7 +286,9 @@ private struct RegionToolbar: View {
     @EnvironmentObject var session: Session
     var body: some View {
         HStack(spacing: 4) {
-            Text(session.selected.isEmpty ? "click inside a region = cut" : "\(session.selected.count) selected")
+            Text(session.selected.isEmpty
+                 ? (session.workMode == .edit ? "drag = select · click inside = cut" : "drag on a lane = export region")
+                 : "\(session.selected.count) selected")
                 .font(.system(size: 10, weight: .bold)).foregroundColor(Theme.dim).padding(.horizontal, 6)
             Button("DUPLICATE") { session.duplicateSelected() }
                 .buttonStyle(PillButtonStyle(small: true)).help("Copy right after (⌘D), or ⌥-drag")
@@ -303,5 +306,32 @@ private struct RegionToolbar: View {
         .padding(5)
         .background(Capsule().fill(Color.black.opacity(0.8)))
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.1)))
+    }
+}
+
+/// EDIT (cut and rearrange) or EXPORT (mark regions to save).
+private struct ModeSwitch: View {
+    @EnvironmentObject var session: Session
+    var body: some View {
+        HStack(spacing: 2) {
+            item(.edit, "scissors", "EDIT", Theme.accent)
+            item(.export, "square.and.arrow.down", "EXPORT", Theme.bass)
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.panel2))
+        .help("EDIT: drag = select, click inside = cut, then move / ⌘D / ⌫ the pieces.  EXPORT: drag = regions to export.  (E)")
+    }
+
+    private func item(_ m: Session.WorkMode, _ icon: String, _ label: String, _ color: Color) -> some View {
+        let on = session.workMode == m
+        return HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10, weight: .bold))
+            Text(label).font(.system(size: 10.5, weight: .bold))
+        }
+        .foregroundColor(on ? .black : Theme.dim)
+        .padding(.horizontal, 10).frame(height: 24)
+        .background(RoundedRectangle(cornerRadius: 5).fill(on ? color : Color.clear))
+        .contentShape(Rectangle())
+        .onTapGesture { session.workMode = m }
     }
 }

@@ -29,6 +29,15 @@ final class Session: ObservableObject {
     @Published var nudgeStep: Double = 0.5 { didSet { UserDefaults.standard.set(nudgeStep, forKey: "nudgeStep") } }
     @Published var follow = true
     @Published var selected: Set<UUID> = []
+
+    /// EDIT: drag marks a range to cut; EXPORT: drag marks regions to export.
+    enum WorkMode: String { case edit, export }
+    @Published var workMode: WorkMode = .edit { didSet { selected = []; cueGhost = nil } }
+    /// Edit selections (ranges to cut). Not saved and never exported.
+    @Published var marks: [Region] = []
+
+    private var activeRegionList: [Region] { workMode == .edit ? marks : allRegions }
+    private func storeActive(_ l: [Region]) { if workMode == .edit { marks = l } else { storeRegions(l) } }
     /// Where the CUE flag is being dragged to (time), drawn as a ghost until released.
     @Published var cueGhost: Double?
     private var undoStack: [Snapshot] = []
@@ -41,11 +50,12 @@ final class Session: ObservableObject {
         var bpm: Double?
         var downbeat: Double?
         var loop: LoopSelection?
+        var marks: [Region] = []
     }
 
     private var snapshot: Snapshot {
         Snapshot(regions: allRegions, clips: song?.clips, beatMap: song?.beatMap, bpm: song?.bpm,
-                 downbeat: song?.downbeat, loop: loop)
+                 downbeat: song?.downbeat, loop: loop, marks: marks)
     }
     @Published var clickOn = false { didSet { player.setClick(clickOn) } }
 
@@ -113,6 +123,8 @@ final class Session: ObservableObject {
         }
         guard player.loadedID != song.id else { return }
         player.load(song: song, dir: library.stemsDir(song))
+        marks = []
+        workMode = .edit
         // Every song starts as one waveform (MIX); stems come in when asked for.
         mode = song.viewMode ?? .mix
         if let start = song.loopStartBar, let bars = song.loopBars {
@@ -271,6 +283,7 @@ final class Session: ObservableObject {
             $0.regions = s.regions; $0.clips = s.clips
             $0.beatMap = s.beatMap; $0.bpm = s.bpm; $0.downbeat = s.downbeat
         }
+        marks = s.marks
         if loop != s.loop { loop = s.loop } else { loopChanged() }
         syncArrangement()
         let ids = Set(s.regions.map(\.id) + (s.clips ?? []).map(\.id))
@@ -317,7 +330,7 @@ final class Session: ObservableObject {
 
     /// Clicking inside a region: cut the lane's audio at its start and end. The piece between is selected.
     func cutAtRegion(_ rid: UUID) {
-        guard let r = allRegions.first(where: { $0.id == rid }) else { return }
+        guard let r = activeRegionList.first(where: { $0.id == rid }) else { return }
         checkpoint()
         var list = clipsWithLane(r.laneId, allClips)
         var inside: [UUID] = []
@@ -339,7 +352,7 @@ final class Session: ObservableObject {
         }
         list = out
         storeClips(list)
-        storeRegions(allRegions.filter { $0.id != rid })
+        storeActive(activeRegionList.filter { $0.id != rid })
         selected = Set(inside)
     }
 
@@ -359,6 +372,12 @@ final class Session: ObservableObject {
     /// Regions of the lanes on screen (2-stem and 4-stem have different lanes).
     var regions: [Region] {
         let ids = Set(lanes.map(\.id))
+        return activeRegionList.filter { ids.contains($0.laneId) }
+    }
+
+    /// Export regions of the lanes on screen (whatever the mode).
+    var exportRegionList: [Region] {
+        let ids = Set(lanes.map(\.id))
         return allRegions.filter { ids.contains($0.laneId) }
     }
 
@@ -376,24 +395,24 @@ final class Session: ObservableObject {
         var nr = r
         nr.start = s; nr.len = n
         checkpoint()
-        storeRegions(allRegions + [nr])
+        storeActive(activeRegionList + [nr])
         selected = [nr.id]
         return nr.id
     }
 
     func setRegion(_ rid: UUID, start: Int, len: Int) {
         guard let (s, n) = clampSpan(start, len) else { return }
-        var list = allRegions
+        var list = activeRegionList
         guard let i = list.firstIndex(where: { $0.id == rid }), list[i].start != s || list[i].len != n else { return }
         list[i].start = s
         list[i].len = n
-        storeRegions(list)
+        storeActive(list)
     }
 
     /// Moves regions from their `base` state by whole beats and lanes (lane index within the lanes on screen).
     func moveRegions(_ base: [Region], beats: Int, lanes laneDelta: Int) {
         let ls = lanes
-        var list = allRegions
+        var list = activeRegionList
         for r in base {
             guard let i = list.firstIndex(where: { $0.id == r.id }) else { continue }
             if let (s, n) = clampSpan(r.start + beats, r.len) { list[i].start = s; list[i].len = n }
@@ -401,12 +420,12 @@ final class Session: ObservableObject {
                 list[i].laneId = ls[max(0, min(ls.count - 1, li + laneDelta))].id
             }
         }
-        if list != allRegions { storeRegions(list) }
+        if list != activeRegionList { storeActive(list) }
     }
 
     func deleteRegion(_ rid: UUID) {
         checkpoint()
-        storeRegions(allRegions.filter { $0.id != rid })
+        storeActive(activeRegionList.filter { $0.id != rid })
         selected.remove(rid)
     }
 
@@ -416,7 +435,7 @@ final class Session: ObservableObject {
         checkpoint()
         let sel = selected
         if allClips.contains(where: { sel.contains($0.id) }) { storeClips(allClips.filter { !sel.contains($0.id) }) }
-        storeRegions(allRegions.filter { !sel.contains($0.id) })
+        storeActive(activeRegionList.filter { !sel.contains($0.id) })
         selected = []
     }
 
@@ -437,7 +456,7 @@ final class Session: ObservableObject {
             return n
         }
         if !newC.isEmpty { storeClips(allClips + newC) }   // later = on top
-        if !newR.isEmpty { storeRegions(allRegions + newR) }
+        if !newR.isEmpty { storeActive(activeRegionList + newR) }
         selected = Set(newC.map(\.id) + newR.map(\.id))
         return (newC, newR)
     }
@@ -448,7 +467,7 @@ final class Session: ObservableObject {
         let ids = Set(regions.map(\.id))
         guard !ids.isEmpty else { return }
         checkpoint()
-        storeRegions(allRegions.filter { !ids.contains($0.id) })
+        storeActive(activeRegionList.filter { !ids.contains($0.id) })
         selected = []
     }
 
@@ -585,6 +604,7 @@ final class Session: ObservableObject {
         let ki = Int(k.rounded())
         if abs(k - Double(ki)) < 1e-9, ki != 0 {
             if !allRegions.isEmpty { storeRegions(allRegions.map { var r = $0; r.start -= ki; return r }) }
+            marks = marks.map { var r = $0; r.start -= ki; return r }
             if !allClips.isEmpty { storeClips(allClips.map { var c = $0; c.start -= ki; c.src -= ki; return c }) }
         }
         if var l = loop {
@@ -659,16 +679,17 @@ final class Session: ObservableObject {
 
     /// Every region on screen, each from its own lane, in one go.
     func exportRegions() {
-        guard let song, let g = grid, !regions.isEmpty, !exporting else { return }
+        guard let song, let g = grid, !exportRegionList.isEmpty, !exporting else { return }
+        guard let folder = library.chooseExportFolder(title: "Where should the \(exportRegionList.count) region\(exportRegionList.count == 1 ? "" : "s") of “\(song.title)” go?") else { return }
         let target = outputBPM ?? g.meanBPM
         var base = Exporter.safeName(song.title) + "_" + formatBPM(target) + "bpm"
         if let key = song.key { base += "_" + key }
         var jobs: [ExportJob] = []
-        for r in regions.sorted(by: { ($0.laneId, $0.start) < ($1.laneId, $1.start) }) {
+        for r in exportRegionList.sorted(by: { ($0.laneId, $0.start) < ($1.laneId, $1.start) }) {
             guard let lane = Lane.all.first(where: { $0.id == r.laneId }) else { continue }
             jobs.append(ExportJob(
                 stemsDir: library.stemsDir(song),
-                outDir: library.loopsDir.appendingPathComponent(Exporter.safeName(song.title)),
+                outDir: folder,
                 baseName: base, rangeName: "bar" + g.rangeLabel(r.start, r.end).replacingOccurrences(of: "–", with: "-"),
                 start: g.posTime(r.start), end: g.posTime(r.end),
                 outputs: {
@@ -726,9 +747,10 @@ final class Session: ObservableObject {
         var base = Exporter.safeName(song.title) + "_" + formatBPM(target) + "bpm"
         if let key = song.key { base += "_" + key }
         let rangeName = (l.whole ? "full_" : "") + "bar\(l.startBar)-\(l.endBar - 1)"
+        guard let folder = library.chooseExportFolder(title: "Where should the loop of “\(song.title)” go?") else { return }
         let job = ExportJob(
             stemsDir: library.stemsDir(song),
-            outDir: library.loopsDir.appendingPathComponent(Exporter.safeName(song.title)),
+            outDir: folder,
             baseName: base, rangeName: rangeName,
             start: range.lowerBound, end: range.upperBound,
             outputs: outputs,

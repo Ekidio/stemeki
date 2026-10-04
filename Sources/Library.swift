@@ -34,6 +34,32 @@ final class Library: ObservableObject {
 
     var songsDir: URL { root.appendingPathComponent("Songs") }
     var loopsDir: URL { root.appendingPathComponent("Loops") }
+
+    /// Where exports go: the folder chosen last time (the STEMEKI Loops folder at first).
+    var exportFolder: URL {
+        get {
+            if let p = UserDefaults.standard.string(forKey: "exportFolder"),
+               FileManager.default.fileExists(atPath: p) { return URL(fileURLWithPath: p, isDirectory: true) }
+            return loopsDir
+        }
+        set { UserDefaults.standard.set(newValue.path, forKey: "exportFolder") }
+    }
+
+    /// Asks where to save, starting in the last export folder. nil = cancelled.
+    func chooseExportFolder(title: String) -> URL? {
+        try? FileManager.default.createDirectory(at: loopsDir, withIntermediateDirectories: true)
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = exportFolder
+        panel.prompt = "Export Here"
+        panel.message = title
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        exportFolder = url
+        return url
+    }
     private var libraryFile: URL { root.appendingPathComponent("library.json") }
 
     func stemsDir(_ song: Song) -> URL { songsDir.appendingPathComponent(song.id.uuidString) }

@@ -212,14 +212,14 @@ struct ExportCard: View {
                 Button { session.exportRegions() } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "square.stack.3d.down.forward.fill")
-                        Text("REGIONS \(session.regions.count)")
+                        Text("REGIONS \(session.exportRegionList.count)")
                     }
                 }
                 .buttonStyle(PillButtonStyle(color: Theme.bass, filled: true, small: true))
                 .keyboardShortcut("e", modifiers: [.command, .shift])
-                .disabled(session.regions.isEmpty || session.exporting)
+                .disabled(session.exportRegionList.isEmpty || session.exporting)
                 .modifier(DisabledDim())
-                .help("Export every region, each from its own lane (⇧⌘E). Drag on a lane to mark one, Delete removes the selected one.")
+                .help("Export every export region, each from its own lane (⇧⌘E). Switch to EXPORT mode (E) and drag on a lane to mark them.")
                 if let song {
                     Text(formatLabel(song)).font(Theme.mono(9)).foregroundColor(Theme.dim).lineLimit(2).fixedSize()
                 }

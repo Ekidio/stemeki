@@ -18,6 +18,8 @@ struct TimelineCanvas: View {
     let loopLabel: String?
     let drumStart: Double?
     let regions: [Region]
+    /// true: regions are edit selections (cut ranges); false: export regions.
+    var editMarks = false
     let cueGhost: Double?
     let selected: Set<UUID>
     let clips: [Clip]
@@ -223,17 +225,25 @@ struct TimelineCanvas: View {
                 let top = rulerHeight + CGFloat(li) * laneH
                 let rect = CGRect(x: x0, y: top + 3, width: x1 - x0, height: laneH - 6)
                 let sel = selected.contains(r.id)
-                ctx.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(lane.color.opacity(sel ? 0.26 : 0.16)))
-                ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), cornerRadius: 4),
-                           with: .color(sel ? Color.white : lane.color), lineWidth: sel ? 2 : 1.2)
+                if editMarks {
+                    // A range to cut: cyan, dashed.
+                    ctx.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(Theme.accent.opacity(sel ? 0.2 : 0.12)))
+                    ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), cornerRadius: 4),
+                               with: .color(Theme.accent), style: StrokeStyle(lineWidth: sel ? 2 : 1.5, dash: [6, 4]))
+                } else {
+                    ctx.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(lane.color.opacity(sel ? 0.26 : 0.16)))
+                    ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), cornerRadius: 4),
+                               with: .color(sel ? Color.white : lane.color), lineWidth: sel ? 2 : 1.2)
+                }
                 let tag = CGRect(x: max(x0, 0) + 4, y: top + 7, width: 0, height: 0)
                 if x1 - x0 > 34 {
-                    ctx.draw(Text(g.rangeLabel(r.start, r.end)).font(Theme.mono(9.5, .bold)).foregroundColor(sel ? .white : lane.color),
+                    ctx.draw(Text((editMarks ? "✂ " : "⬇ ") + g.rangeLabel(r.start, r.end)).font(Theme.mono(9.5, .bold))
+                                .foregroundColor(editMarks ? Theme.accent : (sel ? .white : lane.color)),
                              at: CGPoint(x: tag.minX, y: tag.minY + 5), anchor: .leading)
                 }
                 for xx in [x0, x1] {
                     ctx.fill(Path(roundedRect: CGRect(x: xx - 2, y: rect.midY - 12, width: 4, height: 24), cornerRadius: 2),
-                             with: .color(sel ? Color.white : lane.color))
+                             with: .color(editMarks ? Theme.accent : (sel ? Color.white : lane.color)))
                 }
             }
         }
@@ -367,6 +377,8 @@ final class TimelineNSView: NSView {
         case 124: c.session.shiftLoop(1)
         case 51, 117: c.deleteSelection()
         case 53: c.session.selected = []
+        case 14:   // E: EDIT / EXPORT
+            c.session.workMode = c.session.workMode == .edit ? .export : .edit
         default: super.keyDown(with: e)
         }
     }
@@ -486,7 +498,7 @@ struct TimelineInteraction: NSViewRepresentable {
             case .empty:
                 if p.y < loopBandTop - 4 { return overCue(p, size) ? .openHand : .pointingHand }
                 if p.y < rulerHeight { return .crosshair }
-                if let c = clip(at: p, size), session.selected.contains(c.id) {
+                if session.workMode == .edit, let c = clip(at: p, size), session.selected.contains(c.id) {
                     return NSEvent.modifierFlags.contains(.option) ? .dragCopy : .openHand
                 }
                 return .arrow
@@ -559,7 +571,7 @@ struct TimelineInteraction: NSViewRepresentable {
                 drag = .pendingRegion(t, id)
             case .empty:
                 guard p.y >= rulerHeight else { drag = .pending(t, laneId: nil, clip: nil); return }
-                let c = clip(at: p, size)
+                let c = session.workMode == .edit ? clip(at: p, size) : nil
                 if let c, session.selected.contains(c.id) {
                     if mods.contains(.shift) { session.selected.remove(c.id); drag = .none; return }
                     drag = .pendingClip(t, c.id)
@@ -668,8 +680,9 @@ struct TimelineInteraction: NSViewRepresentable {
                 if let clip { session.selected = [clip] } else { session.selected = []; session.player.seek(t) }
             case .pendingLoop: session.player.seek(t)
             case .pendingRegion(_, let id):
-                // Click inside a region: cut the audio at its start and end.
-                if !downMods.contains(.shift) { session.cutAtRegion(id) }
+                // EDIT: a click inside the selection cuts the audio at its start and end.
+                // EXPORT: a click only selects the region.
+                if !downMods.contains(.shift) && session.workMode == .edit { session.cutAtRegion(id) }
             case .pendingClip(_, let id):
                 session.selected = [id]
             case .cue:
