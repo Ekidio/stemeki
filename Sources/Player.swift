@@ -458,12 +458,12 @@ final class StemPlayer: ObservableObject {
             }
         }
         let hi = click(1760, 0.9), lo = click(1180, 0.6)
-        var b = g.firstBarBeat - 4 * ceil(max(0, g.firstBar) / max(g.bar, 0.1))
+        var b = floor(g.beat(at: 0))
         while true {
             let t = g.time(b)
             if t >= duration { break }
             let start = Int((t * sampleRate).rounded())
-            let isOne = Int((b - g.firstBarBeat).rounded()) % 4 == 0
+            let isOne = ((Int((b - g.firstBarBeat).rounded()) % 4) + 4) % 4 == 0
             let wave = isOne ? hi : lo
             if start + clickLen > 0 {
                 for i in 0..<clickLen {

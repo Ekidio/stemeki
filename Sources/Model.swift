@@ -91,6 +91,10 @@ struct Song: Codable, Identifiable, Equatable {
     var clips: [Clip]?
     /// NUDGE: how many beats the music has been moved against the grid (positive = later).
     var contentShift: Double?
+    /// Positions are counted from the CUE (bar 1 = CUE). Older saves counted from the file start.
+    var cueBased: Bool?
+    /// The CUE was placed on the first full drum hit (done once per song).
+    var autoCued: Bool?
     /// AUTO WARP has run once for this song.
     var autoWarped: Bool?
 
@@ -122,6 +126,9 @@ struct Grid: Equatable, Sendable {
     var bpm: Double            // tempo used when there is only one marker
     var duration: Double
     private(set) var firstBarBeat: Double = 0
+    /// First and last complete bars of the song (bar 1 = the CUE; the first can be 0 or negative).
+    private(set) var firstFullBar: Int = 1
+    private(set) var lastFullBar: Int = 0
 
     init(points: [BeatPoint], bpm: Double, duration: Double) {
         var pts = points.sorted { $0.beat < $1.beat }
@@ -132,12 +139,25 @@ struct Grid: Equatable, Sendable {
         self.points = pts
         self.bpm = bpm
         self.duration = duration
-        // Bar 1: the earliest downbeat (multiple of 4 beats from the 1) at, or a hair before, 0 s.
-        var m = 0.0
-        var guardCount = 0
-        while time(m - 4) >= -0.02 && guardCount < 4000 { m -= 4; guardCount += 1 }
-        while time(m) < -0.02 && guardCount < 8000 { m += 4; guardCount += 1 }
-        firstBarBeat = m
+        // Bar 1 is the CUE point (beat 0); whatever comes before it is bar 0, -1, …
+        firstBarBeat = 0
+        // Complete bars inside the song.
+        var a = 0, guardCount = 0
+        while time(Double((a - 1) * 4)) >= -0.02 && guardCount < 4000 { a -= 1; guardCount += 1 }
+        while time(Double(a * 4)) < -0.02 && guardCount < 8000 { a += 1; guardCount += 1 }
+        firstFullBar = a + 1
+        let lastStart = Int(floor(beat(at: duration + 0.001) / 4))   // bar index (0-based) whose start is the end of the last full bar
+        lastFullBar = max(firstFullBar - 1, lastStart)
+    }
+
+    /// Where an earlier version put bar 1 (the first downbeat at the very start of the file),
+    /// in beats from the CUE. Used once to move saved positions over to the CUE-based numbering.
+    static func legacyFirstBarBeat(points: [BeatPoint], bpm: Double, duration: Double) -> Double {
+        let g = Grid(points: points, bpm: bpm, duration: duration)
+        var m = 0.0, n = 0
+        while g.time(m - 4) >= -0.02 && n < 4000 { m -= 4; n += 1 }
+        while g.time(m) < -0.02 && n < 8000 { m += 4; n += 1 }
+        return m
     }
 
     static func straight(bpm: Double, anchor: Double, duration: Double) -> Grid {
@@ -202,7 +222,8 @@ struct Grid: Equatable, Sendable {
     var anchor: Double { time(0) }
 
     func barStart(_ n: Int) -> Double { time(firstBarBeat + Double(n - 1) * 4) }
-    var firstBar: Double { barStart(1) }
+    /// Start of the first complete bar.
+    var firstBar: Double { barStart(firstFullBar) }
     func barBeat(_ n: Int) -> Double { firstBarBeat + Double(n - 1) * 4 }
 
     /// Bar number (1-based) containing time t; 0 or less before bar 1.
@@ -212,7 +233,11 @@ struct Grid: Equatable, Sendable {
     func nearestBarLine(_ t: Double) -> Int { Int(((beat(at: t) - firstBarBeat) / 4).rounded()) + 1 }
 
     /// Number of complete bars in the song.
-    var fullBars: Int { max(0, Int(floor((beat(at: duration + 0.001) - firstBarBeat) / 4))) }
+    var fullBars: Int { max(0, lastFullBar - firstFullBar + 1) }
+
+    /// The span of complete bars, in beats from the CUE: [start, end).
+    var fullStart: Int { (firstFullBar - 1) * 4 }
+    var fullEnd: Int { lastFullBar * 4 }
 
     /// Local seconds per beat at time t.
     func beatLength(at t: Double) -> Double {

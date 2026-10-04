@@ -64,7 +64,8 @@ enum AutoWarp {
         // Score of a candidate downbeat: how much hit weight sits on its next 32 beats (both ways).
         func phaseScore(_ c: Double) -> Float {
             var sc: Float = 0
-            for k in -4...12 {
+            // Score from the candidate onwards: the drums after it decide (an intro can be out of phase).
+            for k in 0...16 {
                 if let h = best(near: c + Double(k) * p0, window: p0 * 0.05) { sc += h.w }
             }
             return sc
@@ -73,9 +74,10 @@ enum AutoWarp {
             // Candidates: the hits within half a beat of the detected 1.
             var bestC = anchor, bestS = phaseScore(anchor)
             var lo = 0, hi = times.count
-            while lo < hi { let m = (lo + hi) / 2; if times[m] < anchor - p0 / 2 { lo = m + 1 } else { hi = m } }
+            // Candidates within a whole beat either way, so the off-beat and the on-beat are both tried.
+            while lo < hi { let m = (lo + hi) / 2; if times[m] < anchor - p0 { lo = m + 1 } else { hi = m } }
             var i = lo
-            while i < times.count && times[i] <= anchor + p0 / 2 {
+            while i < times.count && times[i] <= anchor + p0 {
                 let sc = phaseScore(times[i])
                 if sc > bestS { bestS = sc; bestC = times[i] }
                 i += 1

@@ -18,6 +18,7 @@ struct TimelineCanvas: View {
     let loopLabel: String?
     let drumStart: Double?
     let regions: [Region]
+    let cueGhost: Double?
     let selected: Set<UUID>
     let clips: [Clip]
     let segs: [String: [Seg]]
@@ -68,10 +69,10 @@ struct TimelineCanvas: View {
             for b in firstBar...lastBar {
                 let xx = x(g.barStart(b), w)
                 guard xx >= -2, xx <= w + 2 else { continue }
-                let isPhrase = (b - 1) % 16 == 0
+                let isPhrase = ((b - 1) % 16 + 16) % 16 == 0
                 let p = Path { $0.move(to: CGPoint(x: xx, y: isPhrase ? 2 : 12)); $0.addLine(to: CGPoint(x: xx, y: size.height)) }
-                if isPhrase { phrases.addPath(p) } else if (b - 1) % labelEvery == 0 || pxPerBar > 14 { bars.addPath(p) }
-                if (b - 1) % labelEvery == 0 && b >= 1 {
+                if isPhrase { phrases.addPath(p) } else if ((b - 1) % labelEvery + labelEvery) % labelEvery == 0 || pxPerBar > 14 { bars.addPath(p) }
+                if ((b - 1) % labelEvery + labelEvery) % labelEvery == 0 {
                     ctx.draw(Text("\(b)").font(Theme.mono(10, isPhrase ? .bold : .medium))
                                 .foregroundColor(isPhrase ? Theme.text : Theme.dim),
                              at: CGPoint(x: xx + 4, y: 9), anchor: .leading)
@@ -253,6 +254,17 @@ struct TimelineCanvas: View {
             }
         }
 
+        // CUE being dragged: a dashed line and a faded flag where it will land.
+        if let cg = cueGhost {
+            let gx = x(cg, w)
+            var dash = Path()
+            dash.move(to: CGPoint(x: gx, y: 0)); dash.addLine(to: CGPoint(x: gx, y: size.height))
+            ctx.stroke(dash, with: .color(Theme.accent), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+            let flag = CGRect(x: gx - 27, y: 2, width: 25, height: 12)
+            ctx.fill(Path(roundedRect: flag, cornerRadius: 2), with: .color(Theme.accent.opacity(0.6)))
+            ctx.draw(Text("CUE").font(Theme.mono(8.5, .heavy)).foregroundColor(.black), at: CGPoint(x: flag.midX, y: flag.midY))
+        }
+
         // Loop: only in the ruler's lower strip.
         if let r = loopRange {
             let x0 = x(r.lowerBound, w), x1 = x(r.upperBound, w)
@@ -403,6 +415,7 @@ struct TimelineInteraction: NSViewRepresentable {
             case clips(Double, [Clip])                         // t0, their state at the start
             case resizeStart(Int, Target)                      // fixed end (exclusive)
             case resizeEnd(Int, Target)                        // fixed start
+            case cue                                           // dragging the CUE flag
         }
 
         private var drag: Drag = .none
@@ -471,7 +484,7 @@ struct TimelineInteraction: NSViewRepresentable {
             case .inside(.region, _, _): return NSEvent.modifierFlags.contains(.option) ? .dragCopy : .pointingHand
             case .inside: return .openHand
             case .empty:
-                if p.y < loopBandTop - 4 { return .pointingHand }
+                if p.y < loopBandTop - 4 { return overCue(p, size) ? .openHand : .pointingHand }
                 if p.y < rulerHeight { return .crosshair }
                 if let c = clip(at: p, size), session.selected.contains(c.id) {
                     return NSEvent.modifierFlags.contains(.option) ? .dragCopy : .openHand
@@ -519,6 +532,13 @@ struct TimelineInteraction: NSViewRepresentable {
                     session.addRegion(lane: lane, start: s, len: u)
                 }
                 drag = .none
+                return
+            }
+            // The CUE flag (or its line) in the bar-numbers strip: drag it; double-click puts it back on the drums.
+            if p.y < loopBandTop - 4, overCue(p, size) {
+                if clicks == 2 { session.autoCue(); drag = .none; return }
+                drag = .cue
+                session.cueGhost = g.anchor
                 return
             }
             // Bar numbers strip: scrub.
@@ -627,6 +647,8 @@ struct TimelineInteraction: NSViewRepresentable {
                 session.moveRegions(base, beats: delta(t0, unit(nil, size)), lanes: lanes)
             case .clips(let t0, let base):
                 session.moveClips(base, beats: delta(t0, unit(nil, size)))
+            case .cue:
+                session.cueGhost = g.time(cueTarget(t, size))
             case .resizeStart(let end, let tg):
                 let u = unit(tg, size)
                 let s = min(snap(t, u), end - u)
@@ -650,12 +672,38 @@ struct TimelineInteraction: NSViewRepresentable {
                 if !downMods.contains(.shift) { session.cutAtRegion(id) }
             case .pendingClip(_, let id):
                 session.selected = [id]
+            case .cue:
+                if let g = session.grid {
+                    let k = cueTarget(t, size)
+                    if abs(k) > 1e-9 { session.moveCue(toBeat: k) }
+                    _ = g
+                }
+                session.cueGhost = nil
             default: break
             }
             drag = .none
         }
 
         func deleteSelection() { session.deleteSelected() }
+
+        /// Is the mouse on the CUE flag or its line (in the bar-numbers strip)?
+        private func overCue(_ p: CGPoint, _ size: CGSize) -> Bool {
+            guard let g = session.grid else { return false }
+            let ax = xOf(g.anchor, size.width)
+            return (p.x >= ax - 29 && p.x <= ax + 3)
+        }
+
+        /// Where a dragged CUE lands, as a beat in the current numbering: the nearest beat line,
+        /// or with ⌥ the nearest real hit (anywhere).
+        private func cueTarget(_ t: Double, _ size: CGSize) -> Double {
+            guard let g = session.grid else { return 0 }
+            if NSEvent.modifierFlags.contains(.option) {
+                let secPerPx = session.viewLength / Double(max(size.width, 1))
+                let hit = session.nearestHit(to: t, stems: nil, maxDist: 15 * secPerPx) ?? t
+                return g.beat(at: hit)
+            }
+            return g.beat(at: t).rounded()
+        }
 
         func scroll(_ e: NSEvent, at p: CGPoint, size: CGSize) {
             let w = max(size.width, 1)

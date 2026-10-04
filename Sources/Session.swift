@@ -29,12 +29,23 @@ final class Session: ObservableObject {
     @Published var nudgeStep: Double = 0.5 { didSet { UserDefaults.standard.set(nudgeStep, forKey: "nudgeStep") } }
     @Published var follow = true
     @Published var selected: Set<UUID> = []
+    /// Where the CUE flag is being dragged to (time), drawn as a ghost until released.
+    @Published var cueGhost: Double?
     private var undoStack: [Snapshot] = []
     private var redoStack: [Snapshot] = []
 
     private struct Snapshot {
         var regions: [Region]
         var clips: [Clip]?
+        var beatMap: [BeatPoint]?
+        var bpm: Double?
+        var downbeat: Double?
+        var loop: LoopSelection?
+    }
+
+    private var snapshot: Snapshot {
+        Snapshot(regions: allRegions, clips: song?.clips, beatMap: song?.beatMap, bpm: song?.bpm,
+                 downbeat: song?.downbeat, loop: loop)
     }
     @Published var clickOn = false { didSet { player.setClick(clickOn) } }
 
@@ -182,21 +193,21 @@ final class Session: ObservableObject {
         guard let g = grid, g.fullBars > 0 else { return nil }
         var l = l
         l.bars = max(1, min(l.bars, g.fullBars))
-        l.startBar = max(1, min(l.startBar, g.fullBars - l.bars + 1))
+        l.startBar = max(g.firstFullBar, min(l.startBar, g.lastFullBar - l.bars + 1))
         return l
     }
 
     func setLoopLength(_ bars: Int) {
         guard let g = grid else { return }
         let start = loop.map { $0.whole ? g.barIndex(at: player.position) : $0.startBar } ?? g.barIndex(at: player.position)
-        loop = clampLoop(LoopSelection(startBar: max(1, start), bars: bars))
+        loop = clampLoop(LoopSelection(startBar: start, bars: bars))
         loopEnabled = true
         if !player.isPlaying, let r = loopRange { player.seek(max(0, r.lowerBound)) }
     }
 
     func setWholeSong() {
         guard let g = grid, g.fullBars > 0 else { return }
-        loop = LoopSelection(startBar: 1, bars: g.fullBars, whole: true)
+        loop = LoopSelection(startBar: g.firstFullBar, bars: g.fullBars, whole: true)
         loopEnabled = true
     }
 
@@ -249,14 +260,18 @@ final class Session: ObservableObject {
 
     /// Call before a change the user may want to undo.
     func checkpoint() {
-        undoStack.append(Snapshot(regions: allRegions, clips: song?.clips))
+        undoStack.append(snapshot)
         if undoStack.count > 60 { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
     private func restore(_ s: Snapshot) {
         guard let id = song?.id else { return }
-        library.update(id) { $0.regions = s.regions; $0.clips = s.clips }
+        library.update(id) {
+            $0.regions = s.regions; $0.clips = s.clips
+            $0.beatMap = s.beatMap; $0.bpm = s.bpm; $0.downbeat = s.downbeat
+        }
+        if loop != s.loop { loop = s.loop } else { loopChanged() }
         syncArrangement()
         let ids = Set(s.regions.map(\.id) + (s.clips ?? []).map(\.id))
         selected = selected.filter { ids.contains($0) }
@@ -264,13 +279,13 @@ final class Session: ObservableObject {
 
     func undo() {
         guard let last = undoStack.popLast() else { return }
-        redoStack.append(Snapshot(regions: allRegions, clips: song?.clips))
+        redoStack.append(snapshot)
         restore(last)
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
-        undoStack.append(Snapshot(regions: allRegions, clips: song?.clips))
+        undoStack.append(snapshot)
         restore(next)
     }
 
@@ -297,7 +312,7 @@ final class Session: ObservableObject {
     private func clipsWithLane(_ laneId: String, _ list: [Clip]) -> [Clip] {
         guard let g = grid, !list.contains(where: { $0.laneId == laneId }) else { return list }
         // From the pickup bar before bar 1 to past the last full bar.
-        return list + [Clip(laneId: laneId, start: -4, src: -4, len: (g.fullBars + 2) * 4)]
+        return list + [Clip(laneId: laneId, start: g.fullStart - 4, src: g.fullStart - 4, len: g.fullEnd - g.fullStart + 8)]
     }
 
     /// Clicking inside a region: cut the lane's audio at its start and end. The piece between is selected.
@@ -334,7 +349,7 @@ final class Session: ObservableObject {
         var list = allClips
         for c in base {
             guard let i = list.firstIndex(where: { $0.id == c.id }) else { continue }
-            list[i].start = max(-4, min(c.start + beats, g.fullBars * 4 + 4))
+            list[i].start = max(g.fullStart - 4, min(c.start + beats, g.fullEnd + 4))
         }
         if list != allClips { storeClips(list) }
     }
@@ -350,9 +365,8 @@ final class Session: ObservableObject {
     /// Keeps a beat range inside the full bars of the song.
     private func clampSpan(_ start: Int, _ len: Int) -> (Int, Int)? {
         guard let g = grid, g.fullBars > 0 else { return nil }
-        let total = g.fullBars * 4
-        let n = max(1, min(len, total))
-        return (max(0, min(start, total - n)), n)
+        let n = max(1, min(len, g.fullEnd - g.fullStart))
+        return (max(g.fullStart, min(start, g.fullEnd - n)), n)
     }
 
     @discardableResult
@@ -529,14 +543,54 @@ final class Session: ObservableObject {
         library.update(s.id) { $0.targetBpm = nil; $0.contentShift = nil }
         setMap([BeatPoint(beat: 0, time: d)], bpm: b)
         autoWarp(rephase: true)
+        autoCue(undoable: false)
     }
 
-    /// Runs AUTO WARP once per song, as soon as the hits are known.
+    /// Runs AUTO WARP once per song, as soon as the hits are known, then puts the CUE on the first full drum hit.
     func autoWarpIfNeeded() {
-        guard let s = song, s.isReady, s.autoWarped != true, !player.hits.isEmpty,
-              player.loadedID == s.id else { return }
-        // First run on a detected grid: let the hits correct the phase of the 1.
-        autoWarp(rephase: s.beatMap == nil || s.beatMap?.count ?? 0 <= 1)
+        guard let s = song, s.isReady, !player.hits.isEmpty, player.loadedID == s.id else { return }
+        if s.autoWarped != true {
+            // First run on a detected grid: let the hits correct the phase of the 1.
+            autoWarp(rephase: s.beatMap == nil || s.beatMap?.count ?? 0 <= 1)
+        }
+        if song?.autoCued != true {
+            autoCue(undoable: false)
+            if let id = song?.id { library.update(id) { $0.autoCued = true } }
+        }
+    }
+
+    // MARK: CUE (bar 1)
+
+    /// The first drum hit at full strength (at least half as strong as the song's main kicks).
+    func firstFullDrumHit() -> Double? {
+        guard let d = player.hits[.drums], d.times.count > 8 else { return nil }
+        let w = d.weights.sorted()
+        let main = w[Int(Double(w.count - 1) * 0.9)]
+        guard let i = d.weights.firstIndex(where: { $0 >= main * 0.5 }) else { return nil }
+        return d.times[i]
+    }
+
+    /// CUE on the beat line nearest to the first full drum hit.
+    func autoCue(undoable: Bool = true) {
+        guard let g = grid, let t = firstFullDrumHit() else { return }
+        moveCue(toBeat: g.beat(at: t).rounded(), undoable: undoable)
+    }
+
+    /// Makes beat `k` (in the current numbering, may be fractional) the CUE = bar 1. Only the numbering
+    /// changes: the grid stays on the music, and regions, cuts and the loop stay where they are in the song.
+    func moveCue(toBeat k: Double, undoable: Bool = true) {
+        guard let g = grid, abs(k) > 1e-9 else { return }
+        if undoable { checkpoint() }
+        setMap(g.points.map { BeatPoint(beat: $0.beat - k, time: $0.time) })
+        let ki = Int(k.rounded())
+        if abs(k - Double(ki)) < 1e-9, ki != 0 {
+            if !allRegions.isEmpty { storeRegions(allRegions.map { var r = $0; r.start -= ki; return r }) }
+            if !allClips.isEmpty { storeClips(allClips.map { var c = $0; c.start -= ki; c.src -= ki; return c }) }
+        }
+        if var l = loop {
+            l.startBar -= Int((k / 4).rounded())
+            loop = l
+        }
     }
 
     var pinCount: Int { max(0, points.count - 1) }

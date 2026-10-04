@@ -45,7 +45,7 @@ struct EditorView: View {
         return ZStack {
             TimelineCanvas(lanes: lanes, audible: audible, peaks: player.peaks, mixPeaks: player.mixPeaks, grid: song?.grid,
                            loopRange: session.loopRange, loopOn: session.loopEnabled, loopLabel: loopLabel,
-                           drumStart: song?.drumStart, regions: session.regions, selected: session.selected,
+                           drumStart: song?.drumStart, regions: session.regions, cueGhost: session.cueGhost, selected: session.selected,
                            clips: session.clips, segs: laneSegs,
                            viewStart: session.viewStart, viewLength: session.viewLength)
             PlayheadLayer(clock: player.clock, viewStart: session.viewStart, viewLength: session.viewLength)

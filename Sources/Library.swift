@@ -45,6 +45,22 @@ final class Library: ObservableObject {
     private func load() {
         guard let data = try? Data(contentsOf: libraryFile) else { return }
         songs = (try? JSONDecoder().decode([Song].self, from: data)) ?? []
+        // Older saves counted bars from the start of the file; move them to the CUE-based numbering
+        // so every region, cut and loop stays on the same music. Existing CUEs are left alone.
+        var changed = false
+        for i in songs.indices where songs[i].cueBased != true {
+            defer { songs[i].cueBased = true; songs[i].autoCued = songs[i].autoCued ?? (songs[i].autoWarped == true) }
+            changed = true
+            guard let bpm = songs[i].bpm, let dur = songs[i].duration else { continue }
+            let pts = songs[i].beatMap ?? songs[i].downbeat.map { [BeatPoint(beat: 0, time: $0)] } ?? []
+            guard !pts.isEmpty else { continue }
+            let shift = Int(Grid.legacyFirstBarBeat(points: pts, bpm: bpm, duration: dur))
+            guard shift != 0 else { continue }
+            if var r = songs[i].regions { for k in r.indices { r[k].start += shift }; songs[i].regions = r }
+            if var c = songs[i].clips { for k in c.indices { c[k].start += shift; c[k].src += shift }; songs[i].clips = c }
+            if let lb = songs[i].loopStartBar { songs[i].loopStartBar = lb + shift / 4 }
+        }
+        if changed { save() }
     }
 
     private func save() {
@@ -98,7 +114,8 @@ final class Library: ObservableObject {
                             srcBits: bits,
                             srcFloat: isPCM && (settings[AVLinearPCMIsFloatKey] as? Bool ?? false),
                             srcChannels: Int(file.fileFormat.channelCount),
-                            duration: Double(file.length) / file.fileFormat.sampleRate)
+                            duration: Double(file.length) / file.fileFormat.sampleRate,
+                            cueBased: true)
             songs.insert(song, at: 0)
             firstNew = firstNew ?? song.id
         }

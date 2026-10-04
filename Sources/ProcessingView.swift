@@ -36,7 +36,7 @@ struct ProcessingView: View {
                 if let peaks = preview.peaks {
                     TimelineCanvas(lanes: [.full], audible: ["mix": true], peaks: [:], mixPeaks: peaks, grid: nil,
                                    loopRange: nil, loopOn: false, loopLabel: nil, drumStart: nil,
-                                   regions: [], selected: [], clips: [], segs: [:],
+                                   regions: [], cueGhost: nil, selected: [], clips: [], segs: [:],
                                    viewStart: 0, viewLength: max(preview.duration, 0.1))
                     ScanLine(progress: p, playhead: preview.duration > 0 ? preview.position / preview.duration : nil)
                 } else {
