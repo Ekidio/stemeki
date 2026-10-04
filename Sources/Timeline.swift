@@ -83,16 +83,6 @@ struct TimelineCanvas: View {
             ctx.stroke(bars, with: .color(.white.opacity(0.09)), lineWidth: 1)
             ctx.stroke(phrases, with: .color(.white.opacity(0.2)), lineWidth: 1)
 
-            // Warp markers (bars pinned to real hits).
-            for pt in g.points where abs(pt.beat) > 1e-6 {
-                let px = x(pt.time, w)
-                guard px >= -6, px <= w + 6 else { continue }
-                var d = Path()
-                d.move(to: CGPoint(x: px, y: 12)); d.addLine(to: CGPoint(x: px + 4, y: 16))
-                d.addLine(to: CGPoint(x: px, y: 20)); d.addLine(to: CGPoint(x: px - 4, y: 16)); d.closeSubpath()
-                ctx.fill(d, with: .color(Theme.accent.opacity(0.55)))
-            }
-
             // The CUE point: the downbeat the grid is counted from.
             let ax = x(g.anchor, w)
             if ax >= 0 && ax <= w {
