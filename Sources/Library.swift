@@ -19,6 +19,7 @@ final class Library: ObservableObject {
     private init() {
         root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Music/STEMEKI")
         try? FileManager.default.createDirectory(at: songsDir, withIntermediateDirectories: true)
+        startClean()
         load()
         // An interrupted job starts over.
         for i in songs.indices where songs[i].state == .separating || songs[i].state == .analyzing {
@@ -67,6 +68,16 @@ final class Library: ObservableObject {
     var selected: Song? { songs.first { $0.id == selectedID } }
 
     // MARK: Persistence
+
+    /// Every launch starts with a clean slate: the previous session's songs leave the list and their
+    /// stem folders go to the Trash (recoverable from there).
+    private func startClean() {
+        let fm = FileManager.default
+        if let items = try? fm.contentsOfDirectory(at: songsDir, includingPropertiesForKeys: nil) {
+            for item in items { try? fm.trashItem(at: item, resultingItemURL: nil) }
+        }
+        try? Data("[]".utf8).write(to: libraryFile, options: .atomic)
+    }
 
     private func load() {
         guard let data = try? Data(contentsOf: libraryFile) else { return }
