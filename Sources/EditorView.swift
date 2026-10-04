@@ -200,9 +200,10 @@ struct LaneHeader: View {
                     }
                     .help("Solo")
                     SmallToggle(systemImage: "arrow.down.to.line", on: st.export, color: lane.color) {
-                        session.setState(lane) { $0.export.toggle() }
+                        // Hear what you export: off = muted, on = unmuted. M still works on its own.
+                        session.setState(lane) { $0.export.toggle(); $0.mute = !$0.export }
                     }
-                    .help("Include this stem in the export")
+                    .help("Include this lane in the export. Turning it off also mutes it (M brings it back to listen).")
                 }
                 Fader(value: Binding(get: { Double(st.gain) }, set: { v in session.setState(lane) { $0.gain = Float(v) } }),
                       color: lane.color, level: audible ? level : 0)
