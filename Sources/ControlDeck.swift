@@ -211,56 +211,50 @@ struct ExportCard: View {
 
     var body: some View {
         let song = library.selected
+        let lanes = session.exportLanes.map(\.fileTag).joined(separator: session.selectedMix ? "+" : ", ")
         Card(title: "EXPORT", accent: Theme.bass) {
             HStack(spacing: 3) {
-                Button("STEMS") { session.exportSeparate.toggle() }
-                    .buttonStyle(PillButtonStyle(color: Theme.bass, active: session.exportSeparate, small: true))
-                    .help("One file per selected stem")
-                Button("MIX") { session.exportMix.toggle() }
-                    .buttonStyle(PillButtonStyle(color: Theme.bass, active: session.exportMix, small: true))
-                    .help("The selected stems in one file, following the faders")
-                Button("FADE \(Int(session.fadeMs)) ms") { session.fadeOn.toggle() }
+                kindButton(.full, "FULL", "doc.on.doc", "Every marked lane as it is: the whole file, original tempo, no edits.")
+                kindButton(.cue, "FROM CUE", "flag.fill", "Every marked lane from the CUE (bar 1) to the end, on the export tempo — stack them in a DAW from bar 1.")
+                Button("SEL. MIX") { session.selectedMix.toggle() }
+                    .buttonStyle(PillButtonStyle(color: Theme.bass, active: session.selectedMix, small: true))
+                    .help("SELECTED MIX: FULL, FROM CUE and LOOP put the marked lanes into one file (\(lanes.isEmpty ? "none marked" : lanes)), following the faders.")
+            }
+            HStack(spacing: 3) {
+                kindButton(.loop, session.loop.map { "LOOP \($0.startBar)–\($0.endBar - 1)" } ?? "LOOP", "repeat",
+                           "Every marked lane cut to the loop, bar-exact, on the export tempo, as loops (⌘E).")
+                    .keyboardShortcut("e", modifiers: .command)
+                kindButton(.regions, "REGIONS \(session.regionsToExport.count)", "square.stack.3d.down.forward.fill",
+                           "Every export region on the marked lanes, each in its own file, as loops (⇧⌘E). Draw them in EXPORT mode.")
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                Button("FADE \(Int(session.fadeMs))ms") { session.fadeOn.toggle() }
                     .buttonStyle(PillButtonStyle(color: Theme.bass, active: session.fadeOn, small: true))
-                    .help("Anti-click fade at both ends of the loop (right-click for length)")
+                    .help("Anti-click fade at both ends (right-click for length)")
                     .contextMenu {
                         ForEach([2.0, 3, 5, 10], id: \.self) { ms in Button("\(Int(ms)) ms") { session.fadeMs = ms } }
                     }
             }
-            HStack(spacing: 8) {
-                Button { session.export() } label: {
-                    HStack(spacing: 5) {
-                        if session.exporting { ProgressView().controlSize(.mini) }
-                        else { Image(systemName: "square.and.arrow.down.fill") }
-                        Text("LOOP")
-                    }
-                }
-                .buttonStyle(PillButtonStyle(color: Theme.bass, filled: true, small: true))
-                .keyboardShortcut("e", modifiers: .command)
-                .disabled(!session.canExport)
-                .modifier(DisabledDim())
-                .help("Export the loop from the selected stems (⌘E)")
-                Button { session.exportRegions() } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "square.stack.3d.down.forward.fill")
-                        Text("REGIONS \(session.exportRegionList.count)")
-                    }
-                }
-                .buttonStyle(PillButtonStyle(color: Theme.bass, filled: true, small: true))
-                .keyboardShortcut("e", modifiers: [.command, .shift])
-                .disabled(session.exportRegionList.isEmpty || session.exporting)
-                .modifier(DisabledDim())
-                .help("Export every export region, each from its own lane (⇧⌘E). Switch to EXPORT mode (E) and drag on a lane to mark them.")
-                if let song {
-                    Text(formatLabel(song)).font(Theme.mono(9)).foregroundColor(Theme.dim).lineLimit(2).fixedSize()
-                }
-            }
         }
+        .help(song.map(formatLabel) ?? "")
+        .overlay(alignment: .topTrailing) {
+            if session.exporting { ProgressView().controlSize(.mini).padding(10) }
+        }
+    }
+
+    private func kindButton(_ kind: Session.ExportKind, _ label: String, _ icon: String, _ help: String) -> some View {
+        Button { session.export(kind) } label: {
+            HStack(spacing: 4) { Image(systemName: icon).font(.system(size: 9.5, weight: .bold)); Text(label) }
+        }
+        .buttonStyle(PillButtonStyle(color: Theme.bass, filled: true, small: true))
+        .disabled(!session.canExport(kind))
+        .modifier(DisabledDim())
+        .help(help)
     }
 
     private func formatLabel(_ s: Song) -> String {
         let ext = Exporter.outputExt(forSource: s.srcExt).uppercased()
         let bits = s.srcFloat ? "\(s.srcBits)f" : "\(s.srcBits)"
-        return "\(ext) \(bits)-bit\n\(String(format: "%g", s.srcSampleRate / 1000)) kHz"
+        return "Files: \(ext) \(bits)-bit \(String(format: "%g", s.srcSampleRate / 1000)) kHz, like the original"
     }
 }
 

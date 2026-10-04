@@ -9,6 +9,16 @@ struct ExportJob: Sendable {
         var stems: [StemKind: Float]  // stem → gain
         /// Edited lanes: each part is some stems with that lane's pieces. nil = everything unedited.
         var parts: [Part]? = nil
+        /// File name without extension (if nil: base_tag_range).
+        var name: String? = nil
+    }
+
+    /// ACID / smpl data written into WAV files so loop-aware software sees tempo, length and loop points.
+    struct Acid: Sendable {
+        var tempo: Double
+        var beats: Int
+        var rootNote: Int?      // MIDI note of the key's root
+        var loop: Bool          // also write loop points (smpl)
     }
 
     struct Part: Sendable {
@@ -28,6 +38,9 @@ struct ExportJob: Sendable {
     var beatStart: Double         // first beat of the loop
     var beats: Double             // loop length in beats
     var targetBpm: Double         // tempo the loop comes out at
+    /// false: keep the original tempo and timing (FULL stems).
+    var stretch: Bool = true
+    var acid: Acid? = nil
 
     var sampleRate: Double
     var bits: Int
@@ -76,7 +89,7 @@ enum Exporter {
               let probe = try? AVAudioFile(forReading: probeURL) else { throw ExportError.read }
         let stemRate = probe.processingFormat.sampleRate
         let resample = abs(stemRate - job.sampleRate) > 0.5
-        let warp = needsWarp(job)
+        let warp = job.stretch && needsWarp(job)
 
         // Source region: the loop plus pre-roll for the stretcher / resampler.
         let preBeats = warp ? 1.0 : 0.0
@@ -122,9 +135,10 @@ enum Exporter {
             let final = try slice(buf, offset: offset, length: outLength, channels: job.channels)
             if let ms = job.fadeMs, ms > 0 { fade(final, frames: Int(ms / 1000 * job.sampleRate)) }
 
-            let name = "\(job.baseName)_\(output.tag)_\(job.rangeName).\(job.ext)"
+            let name = (output.name ?? "\(job.baseName)_\(output.tag)_\(job.rangeName)") + ".\(job.ext)"
             let url = job.outDir.appendingPathComponent(name)
             try write(final, to: url, job: job)
+            if job.ext == "wav", let acid = job.acid { try? addAcidChunks(url, acid, frames: Int(final.frameLength), sampleRate: job.sampleRate) }
             written.append(url)
         }
         return written
@@ -400,6 +414,45 @@ enum Exporter {
         } catch {
             throw ExportError.write(error.localizedDescription)
         }
+    }
+
+    /// Appends the ACID chunk (tempo, beats, root, loop/one-shot) and, for loops, a smpl chunk
+    /// with forward loop points over the whole file. The RIFF size is updated.
+    static func addAcidChunks(_ url: URL, _ a: ExportJob.Acid, frames: Int, sampleRate: Double) throws {
+        var data = try Data(contentsOf: url)
+        guard data.count > 12, data.prefix(4) == Data("RIFF".utf8), data[8..<12] == Data("WAVE".utf8) else { return }
+        func u32(_ v: UInt32) -> Data { withUnsafeBytes(of: v.littleEndian) { Data($0) } }
+        func u16(_ v: UInt16) -> Data { withUnsafeBytes(of: v.littleEndian) { Data($0) } }
+        func f32(_ v: Float) -> Data { withUnsafeBytes(of: v.bitPattern.littleEndian) { Data($0) } }
+
+        var flags: UInt32 = 0x04                       // stretch on
+        if a.rootNote != nil { flags |= 0x02 }         // root note set
+        if !a.loop { flags |= 0x01 }                   // one-shot (not a loop)
+        var acid = Data()
+        acid += u32(flags)
+        acid += u16(UInt16(a.rootNote ?? 60))
+        acid += u16(0x8000)
+        acid += f32(0)
+        acid += u32(UInt32(max(0, a.beats)))
+        acid += u16(4)                                 // meter denominator
+        acid += u16(4)                                 // meter numerator
+        acid += f32(Float(a.tempo))
+        data += Data("acid".utf8) + u32(UInt32(acid.count)) + acid
+
+        if a.loop {
+            var smpl = Data()
+            smpl += u32(0) + u32(0)                                    // manufacturer, product
+            smpl += u32(UInt32((1_000_000_000 / sampleRate).rounded())) // sample period (ns)
+            smpl += u32(UInt32(a.rootNote ?? 60)) + u32(0)             // unity note, pitch fraction
+            smpl += u32(0) + u32(0)                                    // SMPTE format, offset
+            smpl += u32(1) + u32(0)                                    // one loop, no sampler data
+            smpl += u32(0) + u32(0)                                    // cue id, forward loop
+            smpl += u32(0) + u32(UInt32(max(0, frames - 1)))           // start, end (inclusive)
+            smpl += u32(0) + u32(0)                                    // fraction, play forever
+            data += Data("smpl".utf8) + u32(UInt32(smpl.count)) + smpl
+        }
+        data.replaceSubrange(4..<8, with: u32(UInt32(data.count - 8)))
+        try data.write(to: url, options: .atomic)
     }
 
     static func safeName(_ s: String) -> String {

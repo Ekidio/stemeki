@@ -87,6 +87,7 @@ final class Session: ObservableObject {
         exportMix = d.bool(forKey: "exportMix")
         exportSeparate = d.object(forKey: "exportSeparate") as? Bool ?? true
         fadeMs = d.object(forKey: "fadeMs") as? Double ?? 3
+        selectedMix = d.bool(forKey: "selectedMix")
         nudgeStep = d.object(forKey: "nudgeStep") as? Double ?? 0.5
         // Fade is off on every launch, on purpose.
         fadeOn = false
@@ -679,36 +680,122 @@ final class Session: ObservableObject {
 
     var exportLanes: [Lane] { lanes.filter { state($0).export } }
 
-    var canExport: Bool {
-        loop != nil && !exportLanes.isEmpty && (exportSeparate || exportMix) && !exporting
+    /// The four exports, from the plain to the unique.
+    enum ExportKind { case full, cue, loop, regions }
+
+    /// SELECTED MIX: the marked lanes go into one file instead of one file per lane.
+    @Published var selectedMix = false { didSet { UserDefaults.standard.set(selectedMix, forKey: "selectedMix") } }
+
+    /// Export regions on lanes marked for export.
+    var regionsToExport: [Region] {
+        let ids = Set(exportLanes.map(\.id))
+        return exportRegionList.filter { ids.contains($0.laneId) }
     }
 
-    /// Every region on screen, each from its own lane, in one go.
-    func exportRegions() {
-        guard let song, let g = grid, !exportRegionList.isEmpty, !exporting else { return }
-        guard let folder = library.chooseExportFolder(title: "Where should the \(exportRegionList.count) region\(exportRegionList.count == 1 ? "" : "s") of “\(song.title)” go?") else { return }
-        let target = outputBPM ?? g.meanBPM
-        var base = Exporter.safeName(song.title) + "_" + formatBPM(target) + "bpm"
-        if let key = song.key { base += "_" + key }
-        var jobs: [ExportJob] = []
-        for r in exportRegionList.sorted(by: { ($0.laneId, $0.start) < ($1.laneId, $1.start) }) {
-            guard let lane = Lane.all.first(where: { $0.id == r.laneId }) else { continue }
-            jobs.append(ExportJob(
-                stemsDir: library.stemsDir(song),
-                outDir: folder,
-                baseName: base, rangeName: "bar" + g.rangeLabel(r.start, r.end).replacingOccurrences(of: "–", with: "-"),
-                start: g.posTime(r.start), end: g.posTime(r.end),
-                outputs: {
-                    let st = Dictionary(uniqueKeysWithValues: lane.stems.map { ($0, Float(1)) })
-                    return [.init(tag: lane.fileTag, stems: st, parts: [.init(stems: st, segs: segments(for: lane.id))])]
-                }(),
-                fadeMs: fadeOn ? fadeMs : nil,
-                grid: g, beatStart: g.firstBarBeat + Double(r.start), beats: Double(r.len), targetBpm: target,
-                sampleRate: song.srcSampleRate, bits: song.srcBits, isFloat: song.srcFloat,
-                channels: song.srcChannels, ext: Exporter.outputExt(forSource: song.srcExt)))
+    func canExport(_ kind: ExportKind) -> Bool {
+        guard !exporting, grid != nil, !exportLanes.isEmpty else { return false }
+        switch kind {
+        case .full, .cue: return true
+        case .loop: return loop != nil
+        case .regions: return !regionsToExport.isEmpty
         }
+    }
+
+    /// MIDI root note of the song's key (for the ACID data).
+    private var rootNote: Int? {
+        guard let key = song?.key else { return nil }
+        let names = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+        let root = key.hasSuffix("m") ? String(key.dropLast()) : key
+        return names.firstIndex(of: root).map { 60 + $0 }
+    }
+
+    func export(_ kind: ExportKind) {
+        guard let song, let g = grid, canExport(kind) else { return }
+        let target = outputBPM ?? g.meanBPM
+        let title = Exporter.safeName(song.title)
+        let bpm = formatBPM(target) + "bpm"
+        let lanesOut = exportLanes
+
+        // What gets written: one file per lane, or the marked lanes mixed (following their faders).
+        func outputs(name: (String) -> String, edited: Bool) -> [ExportJob.Output] {
+            func part(_ lane: Lane, _ gain: Float) -> ExportJob.Part {
+                .init(stems: Dictionary(uniqueKeysWithValues: lane.stems.map { ($0, gain) }),
+                      segs: edited ? segments(for: lane.id) : nil)
+            }
+            if selectedMix && kind != .regions {
+                let tag = lanesOut.map(\.fileTag).joined(separator: "+")
+                var stems: [StemKind: Float] = [:]
+                for lane in lanesOut { for k in lane.stems { stems[k] = state(lane).gain } }
+                return [.init(tag: tag, stems: stems, parts: lanesOut.map { part($0, state($0).gain) }, name: name(tag))]
+            }
+            return lanesOut.map { lane in
+                let p = part(lane, 1)
+                return .init(tag: lane.fileTag, stems: p.stems, parts: [p], name: name(lane.fileTag))
+            }
+        }
+
+        func job(_ outs: [ExportJob.Output], beatStart: Double, beats: Double, stretch: Bool, acid: ExportJob.Acid?,
+                 folder: URL) -> ExportJob {
+            ExportJob(stemsDir: library.stemsDir(song), outDir: folder, baseName: title, rangeName: "",
+                      start: g.time(beatStart), end: g.time(beatStart + beats), outputs: outs,
+                      fadeMs: fadeOn ? fadeMs : nil, grid: g, beatStart: beatStart, beats: beats,
+                      targetBpm: stretch ? target : g.meanBPM, stretch: stretch, acid: acid,
+                      sampleRate: song.srcSampleRate, bits: song.srcBits, isFloat: song.srcFloat,
+                      channels: song.srcChannels, ext: Exporter.outputExt(forSource: song.srcExt))
+        }
+
+        let what: String
+        switch kind {
+        case .full: what = "the full stems"
+        case .cue: what = "the stems from the CUE"
+        case .loop: what = "the loop stems"
+        case .regions: what = "\(regionsToExport.count) region\(regionsToExport.count == 1 ? "" : "s")"
+        }
+        guard let folder = library.chooseExportFolder(title: "Where should \(what) of “\(song.title)” go?") else { return }
+
+        var jobs: [ExportJob] = []
+        var summary = ""
+        switch kind {
+        case .full:
+            // As it is: the whole file, original tempo, no edits.
+            let b0 = g.beat(at: 0), b1 = g.beat(at: duration)
+            jobs = [job(outputs(name: { "\(title)_\($0)_FULL" }, edited: false),
+                        beatStart: b0, beats: b1 - b0, stretch: false, acid: nil, folder: folder)]
+            summary = "full stems"
+        case .cue:
+            // From bar 1 to the very end, on the export tempo, so stems line up from the CUE in any DAW.
+            let b1 = g.beat(at: duration)
+            jobs = [job(outputs(name: { "\(title)_\($0)_\(bpm)_CUE" }, edited: true),
+                        beatStart: 0, beats: b1, stretch: true,
+                        acid: .init(tempo: target, beats: Int(b1.rounded(.down)), rootNote: rootNote, loop: false), folder: folder)]
+            summary = "stems from the CUE"
+        case .loop:
+            guard let l = loop else { return }
+            let name = "LOOP_\(l.startBar)_\(l.endBar - 1)"
+            jobs = [job(outputs(name: { "\(title)_\($0)_\(bpm)_\(name)" }, edited: true),
+                        beatStart: g.barBeat(l.startBar), beats: Double(l.bars * 4), stretch: true,
+                        acid: .init(tempo: target, beats: l.bars * 4, rootNote: rootNote, loop: true), folder: folder)]
+            summary = "loop · \(l.bars) bar\(l.bars == 1 ? "" : "s")"
+        case .regions:
+            var used: [String: Int] = [:]
+            for r in regionsToExport.sorted(by: { ($0.laneId, $0.start) < ($1.laneId, $1.start) }) {
+                guard let lane = Lane.all.first(where: { $0.id == r.laneId }) else { continue }
+                let range = g.rangeLabel(r.start, r.end).replacingOccurrences(of: "–", with: "_")
+                var name = "\(title)_\(lane.fileTag)_\(bpm)_REGION_\(range)"
+                used[name, default: 0] += 1
+                if let n = used[name], n > 1 { name += "_\(n)" }
+                let p = ExportJob.Part(stems: Dictionary(uniqueKeysWithValues: lane.stems.map { ($0, Float(1)) }),
+                                       segs: segments(for: lane.id))
+                let out = ExportJob.Output(tag: lane.fileTag, stems: p.stems, parts: [p], name: name)
+                jobs.append(job([out], beatStart: g.firstBarBeat + Double(r.start), beats: Double(r.len), stretch: true,
+                                acid: .init(tempo: target, beats: r.len, rootNote: rootNote, loop: true), folder: folder))
+            }
+            summary = "region\(jobs.count == 1 ? "" : "s")"
+        }
+
         exporting = true
         let all = jobs
+        let label = summary
         Task.detached(priority: .userInitiated) {
             let result = Result { try all.flatMap { try Exporter.run($0) } }
             await MainActor.run { [weak self] in
@@ -716,63 +803,7 @@ final class Session: ObservableObject {
                 self.exporting = false
                 switch result {
                 case .success(let urls):
-                    self.toast = Toast(text: "\(urls.count) region\(urls.count == 1 ? "" : "s") saved @ \(formatBPM(target)) BPM", files: urls)
-                case .failure(let e):
-                    self.toast = Toast(text: e.localizedDescription, files: [], isError: true)
-                }
-            }
-        }
-    }
-
-    func export() {
-        guard let song, let g = grid, let l = loop, let range = loopRange, canExport else { return }
-        var outputs: [ExportJob.Output] = []
-        if exportSeparate {
-            for lane in exportLanes {
-                let st = Dictionary(uniqueKeysWithValues: lane.stems.map { ($0, Float(1)) })
-                outputs.append(.init(tag: lane.fileTag, stems: st, parts: [.init(stems: st, segs: segments(for: lane.id))]))
-            }
-        }
-        if exportMix {
-            // The mix follows the faders, mute and solo of the chosen lanes.
-            var stems: [StemKind: Float] = [:]
-            var parts: [ExportJob.Part] = []
-            for lane in exportLanes where isAudible(lane) {
-                var st: [StemKind: Float] = [:]
-                for k in lane.stems { stems[k] = state(lane).gain; st[k] = state(lane).gain }
-                parts.append(.init(stems: st, segs: segments(for: lane.id)))
-            }
-            if !stems.isEmpty {
-                let tag = exportLanes.count == lanes.count ? "MIX" : "MIX-" + exportLanes.map(\.fileTag).joined(separator: "-")
-                outputs.append(.init(tag: tag, stems: stems, parts: parts))
-            }
-        }
-        guard !outputs.isEmpty else { return }
-
-        let target = outputBPM ?? g.meanBPM
-        var base = Exporter.safeName(song.title) + "_" + formatBPM(target) + "bpm"
-        if let key = song.key { base += "_" + key }
-        let rangeName = (l.whole ? "full_" : "") + "bar\(l.startBar)-\(l.endBar - 1)"
-        guard let folder = library.chooseExportFolder(title: "Where should the loop of “\(song.title)” go?") else { return }
-        let job = ExportJob(
-            stemsDir: library.stemsDir(song),
-            outDir: folder,
-            baseName: base, rangeName: rangeName,
-            start: range.lowerBound, end: range.upperBound,
-            outputs: outputs,
-            fadeMs: fadeOn ? fadeMs : nil,
-            grid: g, beatStart: g.barBeat(l.startBar), beats: Double(l.bars * 4), targetBpm: target,
-            sampleRate: song.srcSampleRate, bits: song.srcBits, isFloat: song.srcFloat,
-            channels: song.srcChannels, ext: Exporter.outputExt(forSource: song.srcExt))
-        exporting = true
-        Task.detached(priority: .userInitiated) {
-            let result = Result { try Exporter.run(job) }
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.exporting = false
-                switch result {
-                case .success(let urls):
-                    self.toast = Toast(text: "\(urls.count) loop\(urls.count == 1 ? "" : "s") saved · \(l.bars) bars @ \(formatBPM(target)) BPM", files: urls)
+                    self.toast = Toast(text: "\(urls.count) file\(urls.count == 1 ? "" : "s") saved · \(label)", files: urls)
                 case .failure(let e):
                     self.toast = Toast(text: e.localizedDescription, files: [], isError: true)
                 }
