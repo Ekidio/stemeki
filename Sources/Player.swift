@@ -405,6 +405,51 @@ final class StemPlayer: ObservableObject {
         }
     }
 
+    /// Metronome sound (right-click CLICK): "metal" rings like a struck metal bar (Logic's Klopfgeist),
+    /// "tick" is the short electronic tick.
+    var clickSound: String = UserDefaults.standard.string(forKey: "clickSound") ?? "metal" {
+        didSet {
+            UserDefaults.standard.set(clickSound, forKey: "clickSound")
+            if let g = clickGrid { buildClickTrack(g); if isPlaying { start(at: currentPosition()) } }
+        }
+    }
+
+    /// One click, the same on every beat. Both start at full level on their very first sample (the beat).
+    nonisolated static func clickSound(_ kind: String, sampleRate sr: Double) -> [Float] {
+        var rng = SystemRandomNumberGenerator()
+        if kind == "tick" {
+            // A tight tick: an instant noise burst for the attack plus a short, bright tone body.
+            return (0..<Int(0.02 * sr)).map { i in
+                let t = Double(i) / sr
+                let body = cos(2 * .pi * 2500 * t) * exp(-t * 260)
+                let noise = Double.random(in: -1...1, using: &rng) * exp(-t * 2600)
+                return Float(body * 0.75 + noise * 0.5)
+            }
+        }
+        // A struck metal bar on G5: its modes ring at the bar's inharmonic ratios, the high ones die first,
+        // over a short knock for the attack.
+        let f0 = 783.99
+        let modes: [(ratio: Double, amp: Double, decay: Double)] = [
+            (1.0, 1.0, 18), (2.756, 0.55, 30), (5.404, 0.32, 48), (8.933, 0.16, 70), (13.34, 0.08, 95),
+        ]
+        let n = Int(0.18 * sr)
+        var out = [Float](repeating: 0, count: n)
+        var peak: Float = 0
+        for i in 0..<n {
+            let t = Double(i) / sr
+            var v = 0.0
+            for m in modes { v += m.amp * cos(2 * .pi * f0 * m.ratio * t) * exp(-t * m.decay) }
+            v += Double.random(in: -1...1, using: &rng) * 0.6 * exp(-t * 1800)   // the knock
+            out[i] = Float(v)
+            peak = max(peak, abs(out[i]))
+        }
+        if peak > 0 { for i in 0..<n { out[i] *= 0.95 / peak } }
+        // The last 30 ms fade to silence, so the cut does not click.
+        let tail = Int(0.03 * sr)
+        for i in 0..<tail { out[n - tail + i] *= Float(tail - i) / Float(tail) }
+        return out
+    }
+
     /// Metronome level (right-click CLICK): soft, medium or loud.
     var clickVolume: Double = UserDefaults.standard.object(forKey: "clickVolume") as? Double ?? 1.0 {
         didSet {
@@ -510,20 +555,8 @@ final class StemPlayer: ObservableObject {
         buf.frameLength = total
         let ch = Int(format.channelCount)
         for c in 0..<ch { data[c].update(repeating: 0, count: Int(total)) }
-        // A tight "tick": an instant noise burst for the attack plus a short, bright tone body,
-        // peaking in the very first samples (no soft swell), gone in ~12 ms.
-        let clickLen = Int(0.02 * sampleRate)
-        var rng = SystemRandomNumberGenerator()
-        func click(_ freq: Double, _ amp: Float) -> [Float] {
-            (0..<clickLen).map { i in
-                let t = Double(i) / sampleRate
-                let body = cos(2 * .pi * freq * t) * exp(-t * 260)           // starts at full level
-                let tick = Double.random(in: -1...1, using: &rng) * exp(-t * 2600)
-                return amp * Float(body * 0.75 + tick * 0.5)
-            }
-        }
-        // One sound on every beat: the bright bar click, four times the same (no lower beat tone).
-        let tick = click(2500, 1.0)
+        let tick = Self.clickSound(clickSound, sampleRate: sampleRate)
+        let clickLen = tick.count
         let shift = clickOffsetMs / 1000
         var b = floor(g.beat(at: 0))
         while true {

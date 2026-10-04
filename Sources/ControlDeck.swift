@@ -103,6 +103,10 @@ struct TransportCard: View {
                         .keyboardShortcut("k", modifiers: [])
                         .help("Metronome on the beat grid, the same bright tick on every beat (K). Right-click: volume and fine timing.")
                         .contextMenu {
+                            ForEach([("metal", "Metal (like Logic)"), ("tick", "Tick")], id: \.0) { k, name in
+                                Button((player.clickSound == k ? "✓ " : "") + "Sound: " + name) { player.clickSound = k }
+                            }
+                            Divider()
                             ForEach([(0.35, "Soft"), (0.65, "Medium"), (1.0, "Loud")], id: \.0) { v, name in
                                 Button((abs(player.clickVolume - v) < 0.01 ? "✓ " : "") + "Volume: " + name) { player.clickVolume = v }
                             }
