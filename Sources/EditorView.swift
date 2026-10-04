@@ -5,6 +5,7 @@ struct EditorView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var session: Session
     @ObservedObject var player: StemPlayer
+    @ObservedObject private var celebrate = Celebrate.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,11 +46,15 @@ struct EditorView: View {
         }
         return ZStack {
             TimelineCanvas(lanes: lanes, audible: audible, peaks: player.peaks, mixPeaks: player.mixPeaks, grid: song?.grid,
-                           loopRange: session.loopRange, loopOn: session.loopEnabled, loopLabel: loopLabel,
+                           // While the loop springs to a selection (U), the overlay draws it.
+                           loopRange: celebrate.loopSpring == nil ? session.loopRange : nil,
+                           loopOn: session.loopEnabled, loopLabel: loopLabel,
                            drumStart: song?.drumStart, regions: session.regions, editMarks: session.workMode == .edit, cueGhost: session.cueGhost, selected: session.selected,
                            clips: session.clips, segs: laneSegs,
                            pasteAt: session.canPaste ? session.pasteAt.flatMap { p in song?.grid?.tickTime(p) } : nil,
                            viewStart: session.viewStart, viewLength: session.viewLength)
+            LoopSpringOverlay(viewStart: session.viewStart, viewLength: session.viewLength, loopOn: session.loopEnabled)
+            LaneSweep(lanes: lanes, songID: song?.id)
             PlayheadLayer(clock: player.clock, viewStart: session.viewStart, viewLength: session.viewLength)
             TimelineInteraction(session: session)
             if !session.selected.isEmpty || !session.clips.isEmpty {

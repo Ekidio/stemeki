@@ -257,6 +257,7 @@ struct ExportCard: View {
         .overlay(alignment: .topTrailing) {
             if session.exporting { ProgressView().controlSize(.mini).padding(10) }
         }
+        .overlay(alignment: .top) { ExportBurst().padding(.top, 6) }
     }
 
     private func kindButton(_ kind: Session.ExportKind, _ label: String, _ icon: String, _ help: String) -> some View {
@@ -286,6 +287,7 @@ struct ToastView: View {
             HStack(spacing: 12) {
                 Image(systemName: t.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                     .foregroundColor(t.isError ? .orange : Theme.bass)
+                    .symbolEffect(.bounce, options: .speed(1.4), value: t.text)
                 Text(t.text).font(.system(size: 12.5, weight: .semibold))
                 if !t.files.isEmpty {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(t.files) }
@@ -297,7 +299,7 @@ struct ToastView: View {
             .background(Capsule().fill(Theme.panel2).shadow(color: .black.opacity(0.5), radius: 12, y: 4))
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.08)))
             .padding(.bottom, 24)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.85)))
             .task(id: t) {
                 try? await Task.sleep(nanoseconds: 7_000_000_000)
                 if session.toast == t { withAnimation { session.toast = nil } }

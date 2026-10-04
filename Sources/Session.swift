@@ -274,11 +274,13 @@ final class Session: ObservableObject {
     func loopToSelection() {
         let ids = selected
         guard let span = span(of: ids) else { return }
+        let before = loopRange
         followingLoop = true
         loop = clampLoop(LoopSelection(start: span.0, len: span.1 - span.0))
         followingLoop = false
         loopFollows = ids
         loopEnabled = true
+        if let r = loopRange { Celebrate.shared.loop(from: before, to: r) }
         if let r = loopRange, !player.isPlaying || !r.contains(player.position) { player.seek(max(0, r.lowerBound)) }
     }
 
@@ -1135,7 +1137,10 @@ final class Session: ObservableObject {
                 self.exporting = false
                 switch result {
                 case .success(let urls):
-                    self.toast = Toast(text: "\(urls.count) file\(urls.count == 1 ? "" : "s") saved · \(label)", files: urls)
+                    let first = Celebrate.firstExport()
+                    self.toast = Toast(text: (first ? "Your first STEMEKI export! 🎉 " : "")
+                                       + "\(urls.count) file\(urls.count == 1 ? "" : "s") saved · \(label)", files: urls)
+                    Celebrate.shared.filesExported(urls)
                 case .failure(let e):
                     self.toast = Toast(text: e.localizedDescription, files: [], isError: true)
                 }

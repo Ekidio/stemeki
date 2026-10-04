@@ -113,6 +113,7 @@ struct SidebarView: View {
                     ForEach(library.songs) { song in
                         SongRow(song: song, selected: song.id == library.selectedID,
                                 progress: library.progress[song.id], unsaved: library.isUnsaved(song))
+                            .modifier(RowShimmer(songID: song.id))
                             .onTapGesture { library.selectedID = song.id }
                             .contextMenu {
                                 if song.isReady {
@@ -178,11 +179,14 @@ struct SongRow: View {
                 Text(song.title).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
                 if unsaved {
                     Circle().fill(Theme.loop).frame(width: 6, height: 6).help("Unsaved changes (⌘S saves the project)")
+                        .transition(.scale.combined(with: .opacity))
                 } else if song.projectPath != nil {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundColor(Theme.dim)
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundColor(Theme.bass)
                         .help("Saved: \(song.projectPath ?? "")")
+                        .transition(.spinIn)
                 }
             }
+            .animation(.spring(response: 0.45, dampingFraction: 0.55), value: unsaved)
             switch song.state {
             case .ready:
                 HStack(spacing: 6) {

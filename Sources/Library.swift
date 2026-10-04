@@ -12,6 +12,8 @@ final class Library: ObservableObject {
     @Published private(set) var progress: [UUID: Double] = [:]
     /// No Python with Demucs on this Mac: the setup screen offers STEMEKI's own engine.
     @Published private(set) var needsEngine = false
+    /// Separated in this session and not yet analyzed: celebrated when they come out ready.
+    private var freshlySeparated: Set<UUID> = []
 
     let root: URL
     private var running: Process?
@@ -361,6 +363,7 @@ final class Library: ObservableObject {
                     try? FileManager.default.moveItem(at: tmp.appendingPathComponent(kind.fileName), to: dst)
                 }
                 try? FileManager.default.removeItem(at: tmp)
+                self.freshlySeparated.insert(id)
                 if let s = self.songs.first(where: { $0.id == id }) {
                     self.analyze(s, python: python)
                 }
@@ -412,6 +415,7 @@ final class Library: ObservableObject {
                 }
             }
             if self.selected?.isReady != true { self.selectedID = id }
+            if self.freshlySeparated.remove(id) != nil { Celebrate.shared.songSeparated(id) }
             self.processNext()
         }
     }
