@@ -853,13 +853,13 @@ final class Session: ObservableObject {
         } ?? pts.first
     }
 
-    /// CUE on the first warp marker that sits on a real drum hit, then AUTO WARP again from there.
+    /// CUE on the first warp marker that sits on a real drum hit. Only the numbering moves: the warp map
+    /// stays the one tracked from the song's strong part (tracking again from a sparse intro could drift).
     /// Without markers: the beat line nearest to the first full drum hit.
     func autoCue(undoable: Bool = true) {
         guard let g = grid else { return }
         if g.points.count > 1, let first = firstDrumMarker(g) {
             if abs(first.beat) > 1e-9 { moveCue(toBeat: first.beat, undoable: undoable) }
-            autoWarp()
             return
         }
         guard let t = firstFullDrumHit() else { return }
