@@ -107,22 +107,9 @@ struct HeaderBar: View {
                 }
             }
             Spacer()
-            HStack(spacing: 6) {
-                if session.mode != .mix {
-                Button("ACAPELLA") { session.soloOnly(["vocals"]) }
-                    .buttonStyle(PillButtonStyle(color: Theme.vocals, small: true))
-                Button("INSTRUMENTAL") {
-                    if session.mode == .two { session.soloOnly(["instrumental"]) } else { session.soloOnly(["drums", "bass", "other"]) }
-                }
-                .buttonStyle(PillButtonStyle(color: Theme.instrumental, small: true))
-                Button("ALL") { session.clearSoloMute() }
-                    .buttonStyle(PillButtonStyle(color: Theme.text, small: true))
-                }
-            }
-            ModeSwitch()
-            Segmented(options: StemMode.allCases, selection: $session.mode) { $0.label }
-                .help("MIX: the whole song as one waveform — set the CUE point here. 2/4 STEMS: the separated lanes.")
         }
+        // EDIT / EXPORT sits in the middle of the top bar.
+        .overlay(alignment: .center) { ModeSwitch() }
         .padding(.horizontal, 18)
         .padding(.top, 14)
         .padding(.bottom, 10)
@@ -314,8 +301,8 @@ private struct ModeSwitch: View {
     @EnvironmentObject var session: Session
     var body: some View {
         HStack(spacing: 2) {
-            item(.edit, "scissors", "EDIT", Theme.accent)
-            item(.export, "square.and.arrow.down", "EXPORT", Theme.bass)
+            item(.edit, "scissors", "EDIT", Theme.active)
+            item(.export, "square.and.arrow.down", "EXPORT", Theme.active)
         }
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 7).fill(Theme.panel2))
@@ -325,12 +312,14 @@ private struct ModeSwitch: View {
     private func item(_ m: Session.WorkMode, _ icon: String, _ label: String, _ color: Color) -> some View {
         let on = session.workMode == m
         return HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 10, weight: .bold))
-            Text(label).font(.system(size: 10.5, weight: .bold))
+            Image(systemName: icon).font(.system(size: 11, weight: .bold))
+            Text(label).font(.system(size: 11.5, weight: .heavy)).tracking(0.6)
         }
-        .foregroundColor(on ? .black : Theme.dim)
-        .padding(.horizontal, 10).frame(height: 24)
-        .background(RoundedRectangle(cornerRadius: 5).fill(on ? color : Color.clear))
+        .foregroundColor(on ? .white : Theme.dim)
+        .padding(.horizontal, 16).frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 6).fill(on ? color : Color.clear)
+                        .shadow(color: on ? color.opacity(0.9) : .clear, radius: 8))
+        .animation(.easeOut(duration: 0.15), value: on)
         .contentShape(Rectangle())
         .onTapGesture { session.workMode = m }
     }

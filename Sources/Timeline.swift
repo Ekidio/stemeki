@@ -204,17 +204,6 @@ struct TimelineCanvas: View {
             ctx.fill(Path(CGRect(x: 0, y: top, width: w, height: 1)), with: .color(Theme.line))
         }
 
-        // Where the drums come in: the grid is counted from here.
-        if let ds = drumStart, ds > viewStart, ds < viewEnd {
-            let xx = x(ds, w)
-            var tri = Path()
-            tri.move(to: CGPoint(x: xx - 5, y: 12))
-            tri.addLine(to: CGPoint(x: xx + 5, y: 12))
-            tri.addLine(to: CGPoint(x: xx, y: 20))
-            tri.closeSubpath()
-            ctx.fill(tri, with: .color(Theme.drums))
-        }
-
         // Regions marked on the lanes.
         if let g = grid {
             for r in regions {
@@ -751,8 +740,11 @@ struct OverviewStrip: View {
                     drawOverview(ctx, size)
                 }
                 // Visible window.
-                let vx = CGFloat(session.viewStart / d) * w
-                let vw = max(6, CGFloat(session.viewLength / d) * w)
+                // The visible window, kept inside the strip (the view may start before the song).
+                let rawX = CGFloat(session.viewStart / d) * w
+                let rawEnd = CGFloat((session.viewStart + session.viewLength) / d) * w
+                let vx = max(0, rawX)
+                let vw = max(6, min(w, rawEnd) - vx)
                 RoundedRectangle(cornerRadius: 3)
                     .stroke(Color.white.opacity(0.55), lineWidth: 1)
                     .background(RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.06)))
@@ -761,10 +753,11 @@ struct OverviewStrip: View {
                 Rectangle().fill(Color.white).frame(width: 1.5, height: h)
                     .offset(x: CGFloat(clock.position / d) * w)
             }
+            .clipped()
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { v in
                 let t = Double(v.location.x / w) * d
-                session.viewStart = max(0, min(t - session.viewLength / 2, d - session.viewLength))
+                session.viewStart = session.clampView(t - session.viewLength / 2)
             })
         }
     }

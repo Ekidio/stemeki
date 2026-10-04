@@ -10,6 +10,7 @@ struct ControlDeck: View {
         let row = HStack(alignment: .top, spacing: 10) {
             TransportCard(clock: clock)
             GridCard()
+            StemsCard()
             ExportCard()
         }
         .fixedSize()
@@ -170,6 +171,35 @@ struct GridCard: View {
         let v = Double(bpmText.replacingOccurrences(of: ",", with: "."))
         if let v, v >= 40, v <= 250, abs(v - (session.outputBPM ?? 0)) > 0.0001 { session.setBPM(v) }
         syncText()
+    }
+}
+
+// MARK: Stems
+
+/// How the song is shown: one mix lane, or the separated stems; plus quick solo sets.
+struct StemsCard: View {
+    @EnvironmentObject var session: Session
+
+    var body: some View {
+        Card(title: "STEMS", accent: Theme.instrumental) {
+            Segmented(options: StemMode.allCases, selection: $session.mode) { $0.label }
+                .help("MIX: the whole song as one waveform. 2 / 4 STEMS: the separated lanes.")
+            HStack(spacing: 3) {
+                Button("ACAPELLA") { session.soloOnly(["vocals"]) }
+                    .buttonStyle(PillButtonStyle(color: Theme.vocals, small: true))
+                    .help("Vocals only")
+                Button("INSTR.") {
+                    if session.mode == .two { session.soloOnly(["instrumental"]) } else { session.soloOnly(["drums", "bass", "other"]) }
+                }
+                .buttonStyle(PillButtonStyle(color: Theme.instrumental, small: true))
+                .help("Everything but the vocals")
+                Button("ALL") { session.clearSoloMute() }
+                    .buttonStyle(PillButtonStyle(color: Theme.text, small: true))
+                    .help("Every lane back on")
+            }
+            .disabled(session.mode == .mix)
+            .modifier(DisabledDim())
+        }
     }
 }
 

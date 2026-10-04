@@ -12,7 +12,7 @@ struct StemekiApp: App {
             ContentView()
                 .environmentObject(library)
                 .environmentObject(session)
-                .frame(minWidth: 1340, minHeight: 640)
+                .frame(minWidth: 1400, minHeight: 640)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1440, height: 880)

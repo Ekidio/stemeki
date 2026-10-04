@@ -134,10 +134,9 @@ final class Session: ObservableObject {
         }
         let d = duration
         if let g = song.grid {
-            // Start with about 16 bars on screen, from where the drums come in.
+            // About 16 bars on screen, with clear space before the CUE.
             viewLength = min(d, g.bar * 16)
-            let s = (song.drumStart ?? 0) - g.bar
-            viewStart = max(0, min(s, d - viewLength))
+            viewStart = clampView(g.anchor - g.bar * 2)
         } else {
             viewLength = min(d, 30)
             viewStart = 0
@@ -250,7 +249,7 @@ final class Session: ObservableObject {
         if r.lowerBound < viewStart || r.upperBound > viewStart + viewLength {
             let len = r.upperBound - r.lowerBound
             if len > viewLength { viewLength = min(duration, len * 1.15) }
-            viewStart = max(0, min(r.lowerBound - (viewLength - len) / 2, duration - viewLength))
+            viewStart = clampView(r.lowerBound - (viewLength - len) / 2)
         }
     }
 
@@ -624,11 +623,11 @@ final class Session: ObservableObject {
         let newLen = min(d, max(minLen, viewLength * factor))
         let rel = (t - viewStart) / viewLength
         viewLength = newLen
-        viewStart = max(0, min(t - rel * newLen, d - newLen))
+        viewStart = clampView(t - rel * newLen)
     }
 
     func scroll(by seconds: Double) {
-        viewStart = max(0, min(viewStart + seconds, max(0, duration - viewLength)))
+        viewStart = clampView(viewStart + seconds)
     }
 
     private var handOffTo: (id: UUID, at: Double)?
@@ -646,18 +645,25 @@ final class Session: ObservableObject {
         player.play()
         // Coming from the preparing screen: follow the playhead, starting where the music is.
         follow = true
-        viewStart = max(0, min(h.at - viewLength * 0.08, duration - viewLength))
+        viewStart = clampView(h.at - viewLength * 0.08)
     }
 
     /// Playhead to the very start; with FOLLOW the view goes there too.
     func goToStart() {
         player.seek(0)
-        if follow { viewStart = 0 }
+        if follow { viewStart = clampView(min(0, (grid?.anchor ?? 0) - (grid?.bar ?? 2) * 2)) }
+    }
+
+    /// Empty space allowed before the song starts (and after it ends), so the start is never squeezed.
+    var preRoll: Double { (grid?.bar ?? 2) * 2 }
+
+    func clampView(_ s: Double) -> Double {
+        max(-preRoll, min(s, max(-preRoll, duration - viewLength + preRoll)))
     }
 
     func zoomToFit() {
-        viewStart = 0
-        viewLength = duration
+        viewStart = -preRoll * 0.5
+        viewLength = duration + preRoll
     }
 
     /// Page the view along with the playhead.
@@ -665,7 +671,7 @@ final class Session: ObservableObject {
         guard follow, player.isPlaying else { return }
         let p = player.position
         if p < viewStart || p > viewStart + viewLength * 0.92 {
-            viewStart = max(0, min(p - viewLength * 0.08, duration - viewLength))
+            viewStart = clampView(p - viewLength * 0.08)
         }
     }
 

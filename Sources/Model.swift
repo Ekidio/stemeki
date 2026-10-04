@@ -406,6 +406,8 @@ enum Theme {
     static let dim = Color(red: 0.52, green: 0.54, blue: 0.62)
     static let loop = Color(red: 1.0, green: 0.84, blue: 0.04)
     static let accent = Color(red: 0.27, green: 0.85, blue: 0.98)
+    /// The glowing blue of the active EDIT / EXPORT side.
+    static let active = Color(red: 0.16, green: 0.47, blue: 1.0)
 
     static let vocals = Color(red: 1.0, green: 0.36, blue: 0.54)
     static let drums = Color(red: 1.0, green: 0.66, blue: 0.13)
