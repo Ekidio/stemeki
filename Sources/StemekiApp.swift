@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard e.keyCode == 36 || e.keyCode == 76,
                   e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   !(NSApp.keyWindow?.firstResponder is NSTextView) else { return e }
-            MainActor.assumeIsolated { Session.current?.player.seek(0) }
+            MainActor.assumeIsolated { Session.current?.goToStart() }
             return nil
         }
     }

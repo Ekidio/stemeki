@@ -410,9 +410,9 @@ final class StemPlayer: ObservableObject {
         for c in 0..<ch { d[c].update(repeating: 0, count: n) }
         let fade = Int(0.002 * sr)
         for sg in segs {
-            let tl0 = AVAudioFramePosition((g.barStart(sg.tlBar) * sr).rounded())
-            let tl1 = AVAudioFramePosition((g.barStart(sg.tlBar + sg.bars) * sr).rounded())
-            let src0 = AVAudioFramePosition((g.barStart(sg.srcBar) * sr).rounded())
+            let tl0 = AVAudioFramePosition((g.posTime(sg.tl) * sr).rounded())
+            let tl1 = AVAudioFramePosition((g.posTime(sg.tl + sg.len) * sr).rounded())
+            let src0 = AVAudioFramePosition((g.posTime(sg.src) * sr).rounded())
             let a = max(tl0, from), b = min(tl1, to)
             guard b > a else { continue }
             let srcA = src0 + (a - tl0)
@@ -557,12 +557,12 @@ final class StemPlayer: ObservableObject {
                 // Each piece at its own place on the timeline; gaps stay silent.
                 let fromT = Double(from) / sampleRate
                 for sg in edited {
-                    let tl0 = g.barStart(sg.tlBar), tl1 = g.barStart(sg.tlBar + sg.bars)
+                    let tl0 = g.posTime(sg.tl), tl1 = g.posTime(sg.tl + sg.len)
                     guard tl1 > fromT else { continue }
                     let off = max(0, fromT - tl0)
                     var at = tl0 + off
-                    var sf = frame(g.barStart(sg.srcBar) + off)
-                    let ef = min(frame(g.barStart(sg.srcBar + sg.bars)), total)
+                    var sf = frame(g.posTime(sg.src) + off)
+                    let ef = min(frame(g.posTime(sg.src + sg.len)), total)
                     if sf < 0 { at += Double(-sf) / sampleRate; sf = 0 }
                     guard ef > sf else { continue }
                     let when = AVAudioTime(sampleTime: AVAudioFramePosition(((at - fromT) * sampleRate).rounded()), atRate: sampleRate)

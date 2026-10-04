@@ -67,7 +67,10 @@ struct TransportCard: View {
                         Text("BAR \(p.bar) · \(p.beat)").font(Theme.mono(10.5, .bold)).foregroundColor(Theme.accent)
                     }
                     HStack(spacing: 4) {
-                        Button { player.seek(session.loopRange.map { max(0, $0.lowerBound) } ?? 0) } label: {
+                        Button {
+                            if let r = session.loopRange, session.loopEnabled { player.seek(max(0, r.lowerBound)); session.revealLoop() }
+                            else { session.goToStart() }
+                        } label: {
                             Image(systemName: "backward.end.fill")
                         }
                         .buttonStyle(PillButtonStyle(small: true))

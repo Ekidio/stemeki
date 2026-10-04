@@ -217,7 +217,7 @@ struct TimelineCanvas: View {
             for r in regions {
                 guard let li = lanes.firstIndex(where: { $0.id == r.laneId }) else { continue }
                 let lane = lanes[li]
-                let x0 = x(g.barStart(r.startBar), w), x1 = x(g.barStart(r.endBar), w)
+                let x0 = x(g.posTime(r.start), w), x1 = x(g.posTime(r.end), w)
                 guard x1 >= 0, x0 <= w else { continue }
                 let top = rulerHeight + CGFloat(li) * laneH
                 let rect = CGRect(x: x0, y: top + 3, width: x1 - x0, height: laneH - 6)
@@ -227,7 +227,7 @@ struct TimelineCanvas: View {
                            with: .color(sel ? Color.white : lane.color), lineWidth: sel ? 2 : 1.2)
                 let tag = CGRect(x: max(x0, 0) + 4, y: top + 7, width: 0, height: 0)
                 if x1 - x0 > 34 {
-                    ctx.draw(Text("\(r.startBar)–\(r.endBar - 1)").font(Theme.mono(9.5, .bold)).foregroundColor(sel ? .white : lane.color),
+                    ctx.draw(Text(g.rangeLabel(r.start, r.end)).font(Theme.mono(9.5, .bold)).foregroundColor(sel ? .white : lane.color),
                              at: CGPoint(x: tag.minX, y: tag.minY + 5), anchor: .leading)
                 }
                 for xx in [x0, x1] {
@@ -242,7 +242,7 @@ struct TimelineCanvas: View {
             for c in clips {
                 guard let li = lanes.firstIndex(where: { $0.id == c.laneId }) else { continue }
                 let lane = lanes[li]
-                let x0 = x(g.barStart(c.startBar), w), x1 = x(g.barStart(c.endBar), w)
+                let x0 = x(g.posTime(c.start), w), x1 = x(g.posTime(c.end), w)
                 guard x1 >= 0, x0 <= w else { continue }
                 let top = rulerHeight + CGFloat(li) * laneH
                 let rect = CGRect(x: x0, y: top + 2, width: x1 - x0, height: laneH - 4)
@@ -440,19 +440,19 @@ struct TimelineInteraction: NSViewRepresentable {
             var spans: [(Target, Int, Int)] = []
             if p.y < rulerHeight {
                 guard p.y >= loopBandTop - 4, let l = session.loop else { return .empty }
-                spans = [(.loop, l.startBar, l.bars)]
+                spans = [(.loop, (l.startBar - 1) * 4, l.bars * 4)]
             } else if let lane = lane(at: p, size) {
                 spans = session.regions.filter { $0.laneId == lane.id }
                     .sorted { session.selected.contains($0.id) && !session.selected.contains($1.id) }
-                    .map { (.region($0.id), $0.startBar, $0.bars) }
+                    .map { (.region($0.id), $0.start, $0.len) }
             }
             for (tg, s, n) in spans {
-                let x0 = xOf(g.barStart(s), size.width), x1 = xOf(g.barStart(s + n), size.width)
+                let x0 = xOf(g.posTime(s), size.width), x1 = xOf(g.posTime(s + n), size.width)
                 if abs(p.x - x0) < 6 { return .startEdge(tg, s, n) }
                 if abs(p.x - x1) < 6 { return .endEdge(tg, s, n) }
             }
             for (tg, s, n) in spans {
-                let x0 = xOf(g.barStart(s), size.width), x1 = xOf(g.barStart(s + n), size.width)
+                let x0 = xOf(g.posTime(s), size.width), x1 = xOf(g.posTime(s + n), size.width)
                 if p.x > x0 && p.x < x1 { return .inside(tg, s, n) }
             }
             return .empty
@@ -461,8 +461,8 @@ struct TimelineInteraction: NSViewRepresentable {
         /// The top piece under the mouse on an edited lane.
         private func clip(at p: CGPoint, _ size: CGSize) -> Clip? {
             guard let g = session.grid, let lane = lane(at: p, size) else { return nil }
-            let bar = g.barIndex(at: time(p.x, size.width))
-            return session.clips.last { $0.laneId == lane.id && bar >= $0.startBar && bar < $0.endBar }
+            let b = Int(floor(g.pos(at: time(p.x, size.width))))
+            return session.clips.last { $0.laneId == lane.id && b >= $0.start && b < $0.end }
         }
 
         func cursor(at p: CGPoint, size: CGSize) -> NSCursor {
@@ -480,13 +480,23 @@ struct TimelineInteraction: NSViewRepresentable {
             }
         }
 
-        private func apply(_ target: Target, start: Int, bars: Int) {
+        /// Start/length in beats; the loop is kept to whole bars.
+        private func apply(_ target: Target, start: Int, len: Int) {
             switch target {
             case .loop:
-                if let l = session.clampLoop(LoopSelection(startBar: start, bars: bars)), l != session.loop { session.loop = l }
+                let sb = Int((Double(start) / 4).rounded()) + 1, nb = max(1, Int((Double(len) / 4).rounded()))
+                if let l = session.clampLoop(LoopSelection(startBar: sb, bars: nb)), l != session.loop { session.loop = l }
             case .region(let id):
-                session.setRegion(id, startBar: start, bars: bars)
+                session.setRegion(id, start: start, len: len)
             }
+        }
+
+        /// Snap step in beats: single beats when a beat is wide enough on screen, else whole bars.
+        private func unit(_ target: Target?, _ size: CGSize) -> Int {
+            if case .loop = target { return 4 }
+            guard let g = session.grid else { return 4 }
+            let pxPerBeat = Double(size.width) / (session.viewLength / g.beat)
+            return pxPerBeat >= 20 ? 1 : 4
         }
 
         func down(_ p: CGPoint, size: CGSize, clicks: Int, mods: NSEvent.ModifierFlags) {
@@ -504,7 +514,9 @@ struct TimelineInteraction: NSViewRepresentable {
                         session.loopEnabled = true
                     }
                 } else if let lane = lane(at: p, size), case .empty = h {
-                    session.addRegion(lane: lane, startBar: g.barIndex(at: t), bars: 1)
+                    let u = unit(nil, size)
+                    let s = Int(floor(g.pos(at: t) / Double(u))) * u
+                    session.addRegion(lane: lane, start: s, len: u)
                 }
                 drag = .none
                 return
@@ -556,30 +568,32 @@ struct TimelineInteraction: NSViewRepresentable {
                 if case .scrub = drag { session.player.seek(t) }
                 return
             }
-            func span(_ a: Double, _ b: Double) -> (Int, Int) {
-                let s = g.nearestBarLine(min(a, b))
-                let e = max(s + 1, g.nearestBarLine(max(a, b)))
+            /// Nearest snap line (in beats) to time x.
+            func snap(_ x: Double, _ u: Int) -> Int { Int((g.pos(at: x) / Double(u)).rounded()) * u }
+            func span(_ a: Double, _ b: Double, _ u: Int) -> (Int, Int) {
+                let s = snap(min(a, b), u)
+                let e = max(s + u, snap(max(a, b), u))
                 return (s, e - s)
             }
-            func barDelta(_ t0: Double) -> Int { Int(((g.beat(at: t) - g.beat(at: t0)) / 4).rounded()) }
+            func delta(_ t0: Double, _ u: Int) -> Int { Int(((g.pos(at: t) - g.pos(at: t0)) / Double(u)).rounded()) * u }
             switch drag {
             case .none: break
             case .scrub: session.player.seek(t)
             case .pending(let t0, let laneId, _):
                 guard moved else { return }
                 if let laneId, let lane = session.lanes.first(where: { $0.id == laneId }) {
-                    let (s, n) = span(t0, t)
-                    let id = session.addRegion(lane: lane, startBar: s, bars: n)
+                    let (s, n) = span(t0, t, unit(nil, size))
+                    let id = session.addRegion(lane: lane, start: s, len: n)
                     drag = .create(t0, .region(id))
                 } else {
-                    let (s, n) = span(t0, t)
+                    let (s, n) = span(t0, t, 4)
                     session.loopEnabled = true
-                    apply(.loop, start: s, bars: n)
+                    apply(.loop, start: s, len: n)
                     drag = .create(t0, .loop)
                 }
             case .pendingLoop(let t0):
                 guard moved else { return }
-                drag = .move(t0, session.loop?.startBar ?? 1, session.loop?.bars ?? 1, .loop)
+                drag = .move(t0, ((session.loop?.startBar ?? 1) - 1) * 4, (session.loop?.bars ?? 1) * 4, .loop)
                 NSCursor.closedHand.set()
             case .pendingRegion(let t0, _):
                 guard moved else { return }
@@ -604,21 +618,23 @@ struct TimelineInteraction: NSViewRepresentable {
                 drag = .clips(t0, base)
                 NSCursor.closedHand.set()
             case .create(let t0, let tg):
-                let (s, n) = span(t0, t)
-                apply(tg, start: s, bars: n)
+                let (s, n) = span(t0, t, unit(tg, size))
+                apply(tg, start: s, len: n)
             case .move(let t0, let s0, let n, let tg):
-                apply(tg, start: s0 + barDelta(t0), bars: n)
+                apply(tg, start: s0 + delta(t0, unit(tg, size)), len: n)
             case .regions(let t0, let y0, let base):
                 let lanes = Int(((p.y - y0) / laneHeight(size)).rounded())
-                session.moveRegions(base, bars: barDelta(t0), lanes: lanes)
+                session.moveRegions(base, beats: delta(t0, unit(nil, size)), lanes: lanes)
             case .clips(let t0, let base):
-                session.moveClips(base, bars: barDelta(t0))
+                session.moveClips(base, beats: delta(t0, unit(nil, size)))
             case .resizeStart(let end, let tg):
-                let s = max(1, min(g.nearestBarLine(t), end - 1))
-                apply(tg, start: s, bars: end - s)
+                let u = unit(tg, size)
+                let s = min(snap(t, u), end - u)
+                apply(tg, start: s, len: end - s)
             case .resizeEnd(let start, let tg):
-                let e = max(g.nearestBarLine(t), start + 1)
-                apply(tg, start: start, bars: e - start)
+                let u = unit(tg, size)
+                let e = max(snap(t, u), start + u)
+                apply(tg, start: start, len: e - start)
             }
         }
 

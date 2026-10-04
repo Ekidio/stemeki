@@ -229,33 +229,79 @@ struct Grid: Equatable, Sendable {
     }
 }
 
-/// A bar range marked on one lane (stem) for export.
+/// Positions on the timeline are counted in beats from the start of bar 1 (beat 0 = bar 1's downbeat).
+/// A range marked on one lane (stem): a region to cut or export.
 struct Region: Codable, Identifiable, Equatable {
     var id = UUID()
     var laneId: String
-    var startBar: Int
-    var bars: Int
+    var start: Int      // beats
+    var len: Int        // beats
 
-    var endBar: Int { startBar + bars } // exclusive
+    var end: Int { start + len } // exclusive
+
+    init(id: UUID = UUID(), laneId: String, start: Int, len: Int) {
+        self.id = id; self.laneId = laneId; self.start = start; self.len = len
+    }
+
+    private enum K: String, CodingKey { case id, laneId, start, len, startBar, bars }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        laneId = try c.decode(String.self, forKey: .laneId)
+        if let s = try c.decodeIfPresent(Int.self, forKey: .start) {
+            start = s; len = try c.decode(Int.self, forKey: .len)
+        } else {  // saved in bars by an earlier version
+            start = (try c.decode(Int.self, forKey: .startBar) - 1) * 4
+            len = try c.decode(Int.self, forKey: .bars) * 4
+        }
+    }
+    func encode(to e: Encoder) throws {
+        var c = e.container(keyedBy: K.self)
+        try c.encode(id, forKey: .id); try c.encode(laneId, forKey: .laneId)
+        try c.encode(start, forKey: .start); try c.encode(len, forKey: .len)
+    }
 }
 
-/// A piece of a lane's audio placed on the timeline: bars [srcBar, srcBar+bars) of the song,
-/// heard at bars [startBar, startBar+bars). Later clips lie on top of earlier ones.
+/// A piece of a lane's audio placed on the timeline: song beats [src, src+len), heard at
+/// beats [start, start+len). Later clips lie on top of earlier ones.
 struct Clip: Codable, Identifiable, Equatable {
     var id = UUID()
     var laneId: String
-    var startBar: Int
-    var srcBar: Int
-    var bars: Int
+    var start: Int
+    var src: Int
+    var len: Int
 
-    var endBar: Int { startBar + bars }
+    var end: Int { start + len }
+
+    init(id: UUID = UUID(), laneId: String, start: Int, src: Int, len: Int) {
+        self.id = id; self.laneId = laneId; self.start = start; self.src = src; self.len = len
+    }
+
+    private enum K: String, CodingKey { case id, laneId, start, src, len, startBar, srcBar, bars }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        laneId = try c.decode(String.self, forKey: .laneId)
+        if let s = try c.decodeIfPresent(Int.self, forKey: .start) {
+            start = s; src = try c.decode(Int.self, forKey: .src); len = try c.decode(Int.self, forKey: .len)
+        } else {  // saved in bars by an earlier version
+            start = (try c.decode(Int.self, forKey: .startBar) - 1) * 4
+            src = (try c.decode(Int.self, forKey: .srcBar) - 1) * 4
+            len = try c.decode(Int.self, forKey: .bars) * 4
+        }
+    }
+    func encode(to e: Encoder) throws {
+        var c = e.container(keyedBy: K.self)
+        try c.encode(id, forKey: .id); try c.encode(laneId, forKey: .laneId)
+        try c.encode(start, forKey: .start); try c.encode(src, forKey: .src); try c.encode(len, forKey: .len)
+    }
 }
 
-/// A run of bars of an edited lane: timeline bars [tlBar, tlBar+bars) play song bars [srcBar, …).
+/// A run of beats of an edited lane: timeline beats [tl, tl+len) play song beats [src, …).
 struct Seg: Equatable, Sendable {
-    var tlBar: Int
-    var srcBar: Int
-    var bars: Int
+    var tl: Int
+    var src: Int
+    var len: Int
 }
 
 extension Array where Element == Clip {
@@ -263,16 +309,16 @@ extension Array where Element == Clip {
     func segments(for laneId: String) -> [Seg]? {
         let list = filter { $0.laneId == laneId }
         guard !list.isEmpty else { return nil }
-        let lo = list.map(\.startBar).min()!, hi = list.map(\.endBar).max()!
+        let lo = list.map(\.start).min()!, hi = list.map(\.end).max()!
         var segs: [Seg] = []
         for b in lo..<hi {
-            guard let c = list.last(where: { b >= $0.startBar && b < $0.endBar }) else { continue }
-            let src = b - c.startBar + c.srcBar
-            if var last = segs.last, last.tlBar + last.bars == b, last.srcBar + last.bars == src {
-                last.bars += 1
+            guard let c = list.last(where: { b >= $0.start && b < $0.end }) else { continue }
+            let src = b - c.start + c.src
+            if var last = segs.last, last.tl + last.len == b, last.src + last.len == src {
+                last.len += 1
                 segs[segs.count - 1] = last
             } else {
-                segs.append(Seg(tlBar: b, srcBar: src, bars: 1))
+                segs.append(Seg(tl: b, src: src, len: 1))
             }
         }
         return segs
@@ -280,23 +326,39 @@ extension Array where Element == Clip {
 }
 
 extension Grid {
+    /// Time of position p (beats from bar 1).
+    func posTime(_ p: Int) -> Double { time(firstBarBeat + Double(p)) }
+
+    /// Position (beats from bar 1, fractional) at time t.
+    func pos(at t: Double) -> Double { beat(at: t) - firstBarBeat }
+
+    /// "4" for a bar start, "4.3" for its third beat.
+    func posLabel(_ p: Int) -> String {
+        let bar = Int(floor(Double(p) / 4)) + 1, beat = ((p % 4) + 4) % 4 + 1
+        return beat == 1 ? "\(bar)" : "\(bar).\(beat)"
+    }
+
+    /// "4–7" for whole bars, "4.1–4.2" for beats (last beat inclusive).
+    func rangeLabel(_ start: Int, _ end: Int) -> String {
+        if start % 4 == 0 && end % 4 == 0 { return "\(start / 4 + 1)–\(end / 4)" }
+        let lastBar = Int(floor(Double(end - 1) / 4)) + 1, lastBeat = (((end - 1) % 4) + 4) % 4 + 1
+        let firstBar = Int(floor(Double(start) / 4)) + 1, firstBeat = ((start % 4) + 4) % 4 + 1
+        return "\(firstBar).\(firstBeat)–\(lastBar).\(lastBeat)"
+    }
+
     /// Song time heard at timeline time t on a lane with these segments (nil = silence).
     func sourceTime(_ t: Double, _ segs: [Seg]?) -> Double? {
         guard let segs else { return t }
         let b = beat(at: t)
-        let barPos = (b - firstBarBeat) / 4 + 1
-        for s in segs where barPos >= Double(s.tlBar) && barPos < Double(s.tlBar + s.bars) {
-            return time(b + Double(s.srcBar - s.tlBar) * 4)
-        }
-        return nil
+        return sourceBeat(b, segs).map { time($0) }
     }
 
     /// Same in beats: the song beat heard at timeline beat b (nil = silence).
     func sourceBeat(_ b: Double, _ segs: [Seg]?) -> Double? {
         guard let segs else { return b }
-        let barPos = (b - firstBarBeat) / 4 + 1
-        for s in segs where barPos >= Double(s.tlBar) && barPos < Double(s.tlBar + s.bars) {
-            return b + Double(s.srcBar - s.tlBar) * 4
+        let p = b - firstBarBeat
+        for s in segs where p >= Double(s.tl) && p < Double(s.tl + s.len) {
+            return b + Double(s.src - s.tl)
         }
         return nil
     }

@@ -295,7 +295,8 @@ final class Session: ObservableObject {
     /// A lane's first edit: one clip holding the whole song (pickup and tail bars included).
     private func clipsWithLane(_ laneId: String, _ list: [Clip]) -> [Clip] {
         guard let g = grid, !list.contains(where: { $0.laneId == laneId }) else { return list }
-        return list + [Clip(laneId: laneId, startBar: 0, srcBar: 0, bars: g.fullBars + 2)]
+        // From the pickup bar before bar 1 to past the last full bar.
+        return list + [Clip(laneId: laneId, start: -4, src: -4, len: (g.fullBars + 2) * 4)]
     }
 
     /// Clicking inside a region: cut the lane's audio at its start and end. The piece between is selected.
@@ -306,16 +307,16 @@ final class Session: ObservableObject {
         var inside: [UUID] = []
         var out: [Clip] = []
         for c in list {
-            guard c.laneId == r.laneId, c.startBar < r.endBar, c.endBar > r.startBar else { out.append(c); continue }
-            let cuts = [c.startBar, max(c.startBar, r.startBar), min(c.endBar, r.endBar), c.endBar]
+            guard c.laneId == r.laneId, c.start < r.end, c.end > r.start else { out.append(c); continue }
+            let cuts = [c.start, max(c.start, r.start), min(c.end, r.end), c.end]
             var first = true
             for k in 0..<3 where cuts[k + 1] > cuts[k] {
                 var p = c
                 if !first { p.id = UUID() }
                 first = false
-                p.srcBar = c.srcBar + (cuts[k] - c.startBar)
-                p.startBar = cuts[k]
-                p.bars = cuts[k + 1] - cuts[k]
+                p.src = c.src + (cuts[k] - c.start)
+                p.start = cuts[k]
+                p.len = cuts[k + 1] - cuts[k]
                 out.append(p)
                 if k == 1 { inside.append(p.id) }
             }
@@ -326,13 +327,13 @@ final class Session: ObservableObject {
         selected = Set(inside)
     }
 
-    /// Moves clips from their `base` state by whole bars (same lane).
-    func moveClips(_ base: [Clip], bars: Int) {
+    /// Moves clips from their `base` state by whole beats (same lane).
+    func moveClips(_ base: [Clip], beats: Int) {
         guard let g = grid else { return }
         var list = allClips
         for c in base {
             guard let i = list.firstIndex(where: { $0.id == c.id }) else { continue }
-            list[i].startBar = max(0, min(c.startBar + bars, g.fullBars + 1))
+            list[i].start = max(-4, min(c.start + beats, g.fullBars * 4 + 4))
         }
         if list != allClips { storeClips(list) }
     }
@@ -345,40 +346,42 @@ final class Session: ObservableObject {
         return allRegions.filter { ids.contains($0.laneId) }
     }
 
-    private func clampSpan(_ start: Int, _ bars: Int) -> (Int, Int)? {
+    /// Keeps a beat range inside the full bars of the song.
+    private func clampSpan(_ start: Int, _ len: Int) -> (Int, Int)? {
         guard let g = grid, g.fullBars > 0 else { return nil }
-        let n = max(1, min(bars, g.fullBars))
-        return (max(1, min(start, g.fullBars - n + 1)), n)
+        let total = g.fullBars * 4
+        let n = max(1, min(len, total))
+        return (max(0, min(start, total - n)), n)
     }
 
     @discardableResult
-    func addRegion(lane: Lane, startBar: Int, bars: Int) -> UUID {
-        let r = Region(laneId: lane.id, startBar: max(1, startBar), bars: max(1, bars))
-        guard let (s, n) = clampSpan(r.startBar, r.bars) else { return r.id }
+    func addRegion(lane: Lane, start: Int, len: Int) -> UUID {
+        let r = Region(laneId: lane.id, start: start, len: max(1, len))
+        guard let (s, n) = clampSpan(r.start, r.len) else { return r.id }
         var nr = r
-        nr.startBar = s; nr.bars = n
+        nr.start = s; nr.len = n
         checkpoint()
         storeRegions(allRegions + [nr])
         selected = [nr.id]
         return nr.id
     }
 
-    func setRegion(_ rid: UUID, startBar: Int, bars: Int) {
-        guard let (s, n) = clampSpan(startBar, bars) else { return }
+    func setRegion(_ rid: UUID, start: Int, len: Int) {
+        guard let (s, n) = clampSpan(start, len) else { return }
         var list = allRegions
-        guard let i = list.firstIndex(where: { $0.id == rid }), list[i].startBar != s || list[i].bars != n else { return }
-        list[i].startBar = s
-        list[i].bars = n
+        guard let i = list.firstIndex(where: { $0.id == rid }), list[i].start != s || list[i].len != n else { return }
+        list[i].start = s
+        list[i].len = n
         storeRegions(list)
     }
 
-    /// Moves regions from their `base` state by whole bars and lanes (lane index within the lanes on screen).
-    func moveRegions(_ base: [Region], bars: Int, lanes laneDelta: Int) {
+    /// Moves regions from their `base` state by whole beats and lanes (lane index within the lanes on screen).
+    func moveRegions(_ base: [Region], beats: Int, lanes laneDelta: Int) {
         let ls = lanes
         var list = allRegions
         for r in base {
             guard let i = list.firstIndex(where: { $0.id == r.id }) else { continue }
-            if let (s, n) = clampSpan(r.startBar + bars, r.bars) { list[i].startBar = s; list[i].bars = n }
+            if let (s, n) = clampSpan(r.start + beats, r.len) { list[i].start = s; list[i].len = n }
             if let li = ls.firstIndex(where: { $0.id == r.laneId }) {
                 list[i].laneId = ls[max(0, min(ls.count - 1, li + laneDelta))].id
             }
@@ -408,14 +411,14 @@ final class Session: ObservableObject {
         let selC = clips.filter { selected.contains($0.id) }
         let selR = regions.filter { selected.contains($0.id) }
         guard !selC.isEmpty || !selR.isEmpty else { return ([], []) }
-        let lo = (selC.map(\.startBar) + selR.map(\.startBar)).min()!
-        let hi = (selC.map(\.endBar) + selR.map(\.endBar)).max()!
+        let lo = (selC.map(\.start) + selR.map(\.start)).min()!
+        let hi = (selC.map(\.end) + selR.map(\.end)).max()!
         let shift = place ? hi - lo : 0
         checkpoint()
-        let newC = selC.map { c -> Clip in var n = c; n.id = UUID(); n.startBar += shift; return n }
+        let newC = selC.map { c -> Clip in var n = c; n.id = UUID(); n.start += shift; return n }
         let newR = selR.map { r -> Region in
             var n = r; n.id = UUID()
-            if let (s, b) = clampSpan(r.startBar + shift, r.bars) { n.startBar = s; n.bars = b }
+            if let (s, b) = clampSpan(r.start + shift, r.len) { n.start = s; n.len = b }
             return n
         }
         if !newC.isEmpty { storeClips(allClips + newC) }   // later = on top
@@ -553,6 +556,12 @@ final class Session: ObservableObject {
         viewStart = max(0, min(viewStart + seconds, max(0, duration - viewLength)))
     }
 
+    /// Playhead to the very start; with FOLLOW the view goes there too.
+    func goToStart() {
+        player.seek(0)
+        if follow { viewStart = 0 }
+    }
+
     func zoomToFit() {
         viewStart = 0
         viewLength = duration
@@ -582,19 +591,19 @@ final class Session: ObservableObject {
         var base = Exporter.safeName(song.title) + "_" + formatBPM(target) + "bpm"
         if let key = song.key { base += "_" + key }
         var jobs: [ExportJob] = []
-        for r in regions.sorted(by: { ($0.laneId, $0.startBar) < ($1.laneId, $1.startBar) }) {
+        for r in regions.sorted(by: { ($0.laneId, $0.start) < ($1.laneId, $1.start) }) {
             guard let lane = Lane.all.first(where: { $0.id == r.laneId }) else { continue }
             jobs.append(ExportJob(
                 stemsDir: library.stemsDir(song),
                 outDir: library.loopsDir.appendingPathComponent(Exporter.safeName(song.title)),
-                baseName: base, rangeName: "bar\(r.startBar)-\(r.endBar - 1)",
-                start: g.barStart(r.startBar), end: g.barStart(r.endBar),
+                baseName: base, rangeName: "bar" + g.rangeLabel(r.start, r.end).replacingOccurrences(of: "–", with: "-"),
+                start: g.posTime(r.start), end: g.posTime(r.end),
                 outputs: {
                     let st = Dictionary(uniqueKeysWithValues: lane.stems.map { ($0, Float(1)) })
                     return [.init(tag: lane.fileTag, stems: st, parts: [.init(stems: st, segs: segments(for: lane.id))])]
                 }(),
                 fadeMs: fadeOn ? fadeMs : nil,
-                grid: g, beatStart: g.barBeat(r.startBar), beats: Double(r.bars * 4), targetBpm: target,
+                grid: g, beatStart: g.firstBarBeat + Double(r.start), beats: Double(r.len), targetBpm: target,
                 sampleRate: song.srcSampleRate, bits: song.srcBits, isFloat: song.srcFloat,
                 channels: song.srcChannels, ext: Exporter.outputExt(forSource: song.srcExt)))
         }
