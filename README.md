@@ -31,7 +31,7 @@ Most stem splitters stop at "here are four files". STEMEKI goes on:
 ### Beat grid
 - **AUTO WARP** pins every beat to its hit; **RESET** goes back to the detection.
 - **CUE HERE (C)**, draggable CUE flag, **NUDGE** the music against the grid by ½ beat, 1 beat, ½ bar or 1 bar.
-- **CLICK** metronome with a tight tick (higher on the 1) and fine timing by ear (right-click).
+- **CLICK** metronome: the same bright tick on every beat, with volume and fine timing by ear (right-click).
 - Export tempo: loops are stretched to exactly this BPM (pitch kept), or keep the song's own.
 
 ### Edit (EDIT mode)

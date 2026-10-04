@@ -101,7 +101,7 @@ struct TransportCard: View {
                         }
                         .buttonStyle(PillButtonStyle(color: Theme.loop, active: session.clickOn, small: true))
                         .keyboardShortcut("k", modifiers: [])
-                        .help("Metronome on the beat grid, higher click on the 1 (K). Right-click: fine timing.")
+                        .help("Metronome on the beat grid, the same bright tick on every beat (K). Right-click: volume and fine timing.")
                         .contextMenu {
                             ForEach([(0.35, "Soft"), (0.65, "Medium"), (1.0, "Loud")], id: \.0) { v, name in
                                 Button((abs(player.clickVolume - v) < 0.01 ? "✓ " : "") + "Volume: " + name) { player.clickVolume = v }

@@ -31,7 +31,7 @@ A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen
 ### Ütemrács
 - **AUTO WARP** minden beatet a saját ütéséhez rögzít, a **RESET** visszaállítja a felismertet.
 - **CUE HERE (C)**, húzható CUE-zászló, **NUDGE**: a zene léptetése a rácshoz képest ½ beattel, 1 beattel, ½ vagy 1 ütemmel.
-- **CLICK** metronóm feszes, kattanó hanggal (az 1-esen magasabb), fülre finomhangolható (jobb klikk).
+- **CLICK** metronóm: minden beatre ugyanaz a fényes kattanás, hangereje és időzítése fülre állítható (jobb klikk).
 - Exporttempó: a loopok pontosan erre a BPM-re nyúlnak (a hangmagasság marad), vagy maradhat a dal saját tempója.
 
 ### Szerkesztés (EDIT mód)

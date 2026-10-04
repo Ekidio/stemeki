@@ -502,7 +502,7 @@ final class StemPlayer: ObservableObject {
         }
     }
 
-    /// A click on every beat of the grid, higher on the 1, as long as the song.
+    /// A click on every beat of the grid, the same bright tick each time, as long as the song.
     private func buildClickTrack(_ g: Grid) {
         guard let format, length > 0 else { return }
         let total = AVAudioFrameCount(length * sampleRate)
@@ -522,15 +522,15 @@ final class StemPlayer: ObservableObject {
                 return amp * Float(body * 0.75 + tick * 0.5)
             }
         }
-        let hi = click(2500, 1.0), lo = click(1700, 0.75)
+        // One sound on every beat: the bright bar click, four times the same (no lower beat tone).
+        let tick = click(2500, 1.0)
         let shift = clickOffsetMs / 1000
         var b = floor(g.beat(at: 0))
         while true {
             let t = g.time(b) + shift
             if t >= length { break }
             let start = Int((t * sampleRate).rounded())
-            let isOne = ((Int((b - g.firstBarBeat).rounded()) % 4) + 4) % 4 == 0
-            let wave = isOne ? hi : lo
+            let wave = tick
             if start + clickLen > 0 {
                 for i in 0..<clickLen {
                     let j = start + i
