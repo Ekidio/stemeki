@@ -362,6 +362,15 @@ final class StemPlayer: ObservableObject {
         start(at: position)
     }
 
+    /// Gets the engine running and its clock ticking, so the next play() starts exactly `lead` (50 ms) later.
+    func warmUp() {
+        if !engine.isRunning { try? engine.start() }
+        var tries = 0
+        while (clickNode.lastRenderTime == nil || !(clickNode.lastRenderTime!.isSampleTimeValid)) && tries < 40 {
+            usleep(5000); tries += 1
+        }
+    }
+
     func pause() {
         let p = currentPosition()
         stopNodes()

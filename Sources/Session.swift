@@ -942,22 +942,30 @@ final class Session: ObservableObject {
         viewStart = clampView(viewStart + seconds)
     }
 
-    private var handOffTo: (id: UUID, at: Double)?
+    private var handOffTo: (id: UUID, preview: SourcePreview)?
 
-    /// The processing screen was playing the song: continue in the editor from there.
-    func handOff(songID: UUID, at t: Double) {
-        handOffTo = (songID, t)
+    /// The processing screen was playing the song: it keeps playing until the stems take over in the editor,
+    /// at the same moment of the song.
+    func handOff(songID: UUID, from preview: SourcePreview) {
+        handOffTo?.preview.stop()
+        handOffTo = (songID, preview)
         if player.loadedID == songID { resumeHandOff() }
     }
 
     private func resumeHandOff() {
         guard let h = handOffTo, player.loadedID == h.id else { return }
         handOffTo = nil
-        player.seek(h.at)
+        // The stems start ~50 ms from now (sample-locked start): pick up the song where the preview will be then,
+        // and let the preview fade out at that very moment.
+        let lead = 0.05
+        player.warmUp()
+        let t = h.preview.currentTime + lead
+        player.seek(t)
         player.play()
+        h.preview.handOver(after: lead)
         // Coming from the preparing screen: follow the playhead, starting where the music is.
         follow = true
-        viewStart = clampView(h.at - viewLength * 0.08)
+        viewStart = clampView(t - viewLength * 0.08)
     }
 
     /// Playhead to the very start; with FOLLOW the view goes there too.

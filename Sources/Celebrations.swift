@@ -57,53 +57,7 @@ final class Celebrate: ObservableObject {
     }
 }
 
-// MARK: 1. Separation done: the stems sweep into their lanes
-
-/// Over the lanes (below the ruler): each stem's colour floods its lane from the left, one after the other, then fades.
-struct LaneSweep: View {
-    let lanes: [Lane]
-    let songID: UUID?
-    @ObservedObject var celebrate = Celebrate.shared
-    @State private var run = 0
-    @State private var progress: [CGFloat] = []
-    @State private var fade = 1.0
-
-    var body: some View {
-        GeometryReader { geo in
-            let h = (geo.size.height - rulerHeight) / CGFloat(max(1, lanes.count))
-            ZStack(alignment: .topLeading) {
-                if run > 0 {
-                    ForEach(Array(lanes.enumerated()), id: \.offset) { i, lane in
-                        let p = i < progress.count ? progress[i] : 0
-                        LinearGradient(colors: [lane.color.opacity(0), lane.color.opacity(0.55), Color.white.opacity(0.7)],
-                                       startPoint: .leading, endPoint: .trailing)
-                            .frame(width: max(0, geo.size.width * p), height: h - 6)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .offset(y: rulerHeight + CGFloat(i) * h + 3)
-                            .blendMode(.plusLighter)
-                    }
-                }
-            }
-            .opacity(fade)
-        }
-        .allowsHitTesting(false)
-        .onReceive(celebrate.$separated) { e in
-            guard let e, e.id == songID, celebrate.claim(e.n, "sweep") else { return }
-            start()
-        }
-    }
-
-    private func start() {
-        run += 1
-        // Room for every lane, also when the view switches from MIX to the four stems just now.
-        progress = Array(repeating: 0, count: 4)
-        fade = 1
-        for i in 0..<4 {
-            withAnimation(.easeOut(duration: 0.55).delay(0.2 + Double(i) * 0.09)) { progress[i] = 1 }
-        }
-        withAnimation(.easeIn(duration: 0.45).delay(0.2 + 4 * 0.09 + 0.4)) { fade = 0 }
-    }
-}
+// MARK: 1. Separation done: the song's row shimmers in the list
 
 /// The song's row in the list: a light sweep across it when its stems are ready.
 struct RowShimmer: ViewModifier {

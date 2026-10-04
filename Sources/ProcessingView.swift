@@ -77,9 +77,9 @@ struct ProcessingView: View {
         .onAppear { preview.load(URL(fileURLWithPath: song.sourcePath), autoplay: true) }
         .onChange(of: song.id) { _, _ in preview.load(URL(fileURLWithPath: song.sourcePath), autoplay: true) }
         .onDisappear {
-            // Still playing when the stems are ready: the editor carries on from the same moment.
-            if preview.isPlaying { Session.current?.handOff(songID: song.id, at: preview.position) }
-            preview.stop()
+            // Still playing when the stems are ready: the preview keeps playing until the stems take over,
+            // at the same moment of the song, so there is no gap.
+            if preview.isPlaying, let s = Session.current { s.handOff(songID: song.id, from: preview) } else { preview.stop() }
         }
     }
 
@@ -290,5 +290,16 @@ final class SourcePreview: ObservableObject {
         player?.stop()
         isPlaying = false
         timer?.invalidate()
+    }
+
+    /// Where the song is right now (more exact than `position`, which follows a timer).
+    var currentTime: Double { player?.currentTime ?? position }
+
+    /// The stems take over in `delay` seconds: fade out over a few milliseconds right then, and stop.
+    func handOver(after delay: Double) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, delay - 0.01)) { [self] in
+            player?.setVolume(0, fadeDuration: 0.03)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [self] in stop() }
+        }
     }
 }

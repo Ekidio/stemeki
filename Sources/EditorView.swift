@@ -54,7 +54,6 @@ struct EditorView: View {
                            pasteAt: session.canPaste ? session.pasteAt.flatMap { p in song?.grid?.tickTime(p) } : nil,
                            viewStart: session.viewStart, viewLength: session.viewLength)
             LoopSpringOverlay(viewStart: session.viewStart, viewLength: session.viewLength, loopOn: session.loopEnabled)
-            LaneSweep(lanes: lanes, songID: song?.id)
             PlayheadLayer(clock: player.clock, viewStart: session.viewStart, viewLength: session.viewLength)
             TimelineInteraction(session: session)
             if !session.selected.isEmpty || !session.clips.isEmpty {
