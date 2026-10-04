@@ -570,6 +570,9 @@ final class Session: ObservableObject {
         handOffTo = nil
         player.seek(h.at)
         player.play()
+        // Coming from the preparing screen: follow the playhead, starting where the music is.
+        follow = true
+        viewStart = max(0, min(h.at - viewLength * 0.08, duration - viewLength))
     }
 
     /// Playhead to the very start; with FOLLOW the view goes there too.
