@@ -4,3 +4,4 @@ dist/
 versions/
 .DS_Store
 __pycache__/
+demo/

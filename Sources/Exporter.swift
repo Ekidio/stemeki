@@ -139,6 +139,7 @@ enum Exporter {
             let url = job.outDir.appendingPathComponent(name)
             try write(final, to: url, job: job)
             if job.ext == "wav", let acid = job.acid { try? addAcidChunks(url, acid, frames: Int(final.frameLength), sampleRate: job.sampleRate) }
+            if job.ext == "wav" { try? addInfoChunk(url, title: url.deletingPathExtension().lastPathComponent) }
             written.append(url)
         }
         return written
@@ -414,6 +415,26 @@ enum Exporter {
         } catch {
             throw ExportError.write(error.localizedDescription)
         }
+    }
+
+    /// "Made with STEMEKI": a RIFF LIST/INFO chunk with the software, a comment and the title,
+    /// which Finder and most DAWs show in the file's info.
+    static func addInfoChunk(_ url: URL, title: String) throws {
+        var data = try Data(contentsOf: url)
+        guard data.count > 12, data.prefix(4) == Data("RIFF".utf8), data[8..<12] == Data("WAVE".utf8) else { return }
+        func u32(_ v: UInt32) -> Data { withUnsafeBytes(of: v.littleEndian) { Data($0) } }
+        func field(_ id: String, _ text: String) -> Data {
+            var t = Data(text.utf8); t.append(0)
+            if t.count % 2 == 1 { t.append(0) }
+            return Data(id.utf8) + u32(UInt32(t.count)) + t
+        }
+        var info = Data("INFO".utf8)
+        info += field("ISFT", "STEMEKI · EKIDIO SOUND")
+        info += field("ICMT", "Made with STEMEKI · stems · loops · remix")
+        info += field("INAM", title)
+        data += Data("LIST".utf8) + u32(UInt32(info.count)) + info
+        data.replaceSubrange(4..<8, with: u32(UInt32(data.count - 8)))
+        try data.write(to: url, options: .atomic)
     }
 
     /// Appends the ACID chunk (tempo, beats, root, loop/one-shot) and, for loops, a smpl chunk
