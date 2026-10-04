@@ -229,9 +229,9 @@ final class StemPlayer: ObservableObject {
 
     private let engine = AVAudioEngine()
     private var nodes: [StemKind: AVAudioPlayerNode] = [:]
-    // Stems + click → submix → time-stretch (only when warping) → output.
+    // Stems + click → submix → output. Nothing in between: the stems play exactly as they are
+    // (a time-pitch unit here, even bypassed, cut the sound into grains on recent macOS).
     private let submix = AVAudioMixerNode()
-    private let stretch = AVAudioUnitTimePitch()
     private let clickNode = AVAudioPlayerNode()
     private var clickTrack: AVAudioPCMBuffer?
     private var clickGrid: Grid?
@@ -263,10 +263,7 @@ final class StemPlayer: ObservableObject {
         }
         engine.attach(clickNode)
         engine.attach(submix)
-        engine.attach(stretch)
-        engine.connect(submix, to: stretch, format: nil)
-        engine.connect(stretch, to: engine.mainMixerNode, format: nil)
-        stretch.bypass = true
+        engine.connect(submix, to: engine.mainMixerNode, format: nil)
         clickNode.volume = 0
     }
 
@@ -305,9 +302,7 @@ final class StemPlayer: ObservableObject {
         engine.disconnectNodeOutput(clickNode)
         engine.connect(clickNode, to: submix, format: format)
         engine.disconnectNodeOutput(submix)
-        engine.connect(submix, to: stretch, format: format)
-        engine.disconnectNodeOutput(stretch)
-        engine.connect(stretch, to: engine.mainMixerNode, format: format)
+        engine.connect(submix, to: engine.mainMixerNode, format: format)
         clickTrack = nil
         if let g = clickGrid { buildClickTrack(g) }
         let list = urls
@@ -401,9 +396,17 @@ final class StemPlayer: ObservableObject {
         }
     }
 
+    /// Metronome level (right-click CLICK): soft, medium or loud.
+    var clickVolume: Double = UserDefaults.standard.object(forKey: "clickVolume") as? Double ?? 1.0 {
+        didSet {
+            UserDefaults.standard.set(clickVolume, forKey: "clickVolume")
+            if clickOn { clickNode.volume = Float(clickVolume) }
+        }
+    }
+
     func setClick(_ on: Bool) {
         clickOn = on
-        clickNode.volume = on ? 0.55 : 0
+        clickNode.volume = on ? Float(clickVolume) : 0
     }
 
     /// The bar grid the metronome follows. Rebuilds the click track and re-syncs playback.
@@ -490,16 +493,6 @@ final class StemPlayer: ObservableObject {
         }
     }
 
-    /// Playback speed (1 = original). Pitch is kept.
-    func setRate(_ r: Double) {
-        guard abs(r - rate) > 1e-9 else { return }
-        let p = currentPosition()
-        rate = r
-        stretch.rate = Float(r)
-        stretch.bypass = abs(r - 1) < 1e-6
-        if isPlaying { start(at: p) }
-    }
-
     /// A click on every beat of the grid, higher on the 1, as long as the song.
     private func buildClickTrack(_ g: Grid) {
         guard let format, length > 0 else { return }
@@ -510,17 +503,17 @@ final class StemPlayer: ObservableObject {
         for c in 0..<ch { data[c].update(repeating: 0, count: Int(total)) }
         // A tight "tick": an instant noise burst for the attack plus a short, bright tone body,
         // peaking in the very first samples (no soft swell), gone in ~12 ms.
-        let clickLen = Int(0.014 * sampleRate)
+        let clickLen = Int(0.02 * sampleRate)
         var rng = SystemRandomNumberGenerator()
         func click(_ freq: Double, _ amp: Float) -> [Float] {
             (0..<clickLen).map { i in
                 let t = Double(i) / sampleRate
-                let body = cos(2 * .pi * freq * t) * exp(-t * 380)           // starts at full level
+                let body = cos(2 * .pi * freq * t) * exp(-t * 260)           // starts at full level
                 let tick = Double.random(in: -1...1, using: &rng) * exp(-t * 2600)
                 return amp * Float(body * 0.75 + tick * 0.5)
             }
         }
-        let hi = click(2500, 0.95), lo = click(1700, 0.6)
+        let hi = click(2500, 1.0), lo = click(1700, 0.75)
         let shift = clickOffsetMs / 1000
         var b = floor(g.beat(at: 0))
         while true {
@@ -571,7 +564,30 @@ final class StemPlayer: ObservableObject {
 
     private func frame(_ t: Double) -> AVAudioFramePosition { AVAudioFramePosition((t * sampleRate).rounded()) }
 
-    private func start(at t: Double) {
+    /// Testing: hears what goes to the speakers (the stems and the click after the mixer), muted.
+    func debugCapture(_ block: @escaping (AVAudioPCMBuffer) -> Void) {
+        engine.mainMixerNode.outputVolume = 0
+        submix.installTap(onBus: 0, bufferSize: 4096, format: nil) { buf, _ in block(buf) }
+    }
+
+    /// Testing: each stem's player output on its own.
+    func debugCaptureStems(_ block: @escaping (StemKind, AVAudioPCMBuffer) -> Void) {
+        engine.mainMixerNode.outputVolume = 0
+        for (k, n) in nodes { n.installTap(onBus: 0, bufferSize: 4096, format: nil) { buf, _ in block(k, buf) } }
+    }
+
+    /// How often playback was (re)started, for finding stray restarts (STEMEKI_DEBUG_LOG=<file> logs each one).
+    private(set) var starts = 0
+    private static let debugLog = ProcessInfo.processInfo.environment["STEMEKI_DEBUG_LOG"]
+
+    private func start(at t: Double, _ caller: String = #function, _ line: Int = #line) {
+        starts += 1
+        if let path = Self.debugLog, let h = FileHandle(forWritingAtPath: path) ?? {
+            FileManager.default.createFile(atPath: path, contents: nil); return FileHandle(forWritingAtPath: path) }() {
+            h.seekToEndOfFile()
+            h.write(String(format: "%.3f start #%d at %.3f from %@:%d\n", Date().timeIntervalSince1970, starts, t, caller, line).data(using: .utf8)!)
+            try? h.close()
+        }
         stopNodes()
         do {
             if !engine.isRunning { try engine.start() }
@@ -649,9 +665,23 @@ final class StemPlayer: ObservableObject {
             if let c = clickSlice(from: from, to: total) { clickNode.scheduleBuffer(c, at: nil, options: []) }
         }
         playFrom = from
-        // Start every stem on the same host time so they stay sample-locked.
-        startHost = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: 0.04)
-        let when = AVAudioTime(hostTime: startHost)
+        // Every stem and the click start on the same sample of the engine's timeline. Started by host time,
+        // the players came out 10–20 ms apart on recent macOS: the kick flammed against the rest and the
+        // music seemed to jump from beat to beat.
+        let lead = 0.05
+        var ref = clickNode.lastRenderTime
+        var tries = 0
+        while (ref == nil || !(ref!.isSampleTimeValid)) && tries < 40 {
+            usleep(5000); tries += 1; ref = clickNode.lastRenderTime
+        }
+        let when: AVAudioTime
+        if let ref, ref.isSampleTimeValid {
+            when = AVAudioTime(sampleTime: ref.sampleTime + AVAudioFramePosition(lead * ref.sampleRate), atRate: ref.sampleRate)
+            startHost = (ref.isHostTimeValid ? ref.hostTime : mach_absolute_time()) + AVAudioTime.hostTime(forSeconds: lead)
+        } else {
+            startHost = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead)
+            when = AVAudioTime(hostTime: startHost)
+        }
         for node in nodes.values { node.play(at: when) }
         clickNode.play(at: when)
         isPlaying = true
@@ -667,7 +697,6 @@ final class StemPlayer: ObservableObject {
         timer = nil
         for node in nodes.values { node.stop() }
         clickNode.stop()
-        stretch.reset()
         isPlaying = false
         clock.levels = [:]
     }

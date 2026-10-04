@@ -103,6 +103,10 @@ struct TransportCard: View {
                         .keyboardShortcut("k", modifiers: [])
                         .help("Metronome on the beat grid, higher click on the 1 (K). Right-click: fine timing.")
                         .contextMenu {
+                            ForEach([(0.35, "Soft"), (0.65, "Medium"), (1.0, "Loud")], id: \.0) { v, name in
+                                Button((abs(player.clickVolume - v) < 0.01 ? "✓ " : "") + "Volume: " + name) { player.clickVolume = v }
+                            }
+                            Divider()
                             ForEach([-10.0, -6, -4, -2, 0, 2, 4, 6, 10], id: \.self) { ms in
                                 Button((ms == player.clickOffsetMs ? "✓ " : "") + (ms == 0 ? "On the grid (0 ms)" : String(format: "%+.0f ms", ms))) {
                                     player.clickOffsetMs = ms
