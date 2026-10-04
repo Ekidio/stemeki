@@ -1,0 +1,724 @@
+import SwiftUI
+import AppKit
+
+let rulerHeight: CGFloat = 40
+/// The loop lives in the lower strip of the ruler.
+let loopBandTop: CGFloat = 22
+
+/// Everything static on the timeline: ruler, bar grid, stem waveforms, loop frame.
+/// It does not watch the play clock, so it only redraws when the view or the data changes.
+struct TimelineCanvas: View {
+    let lanes: [Lane]
+    let audible: [String: Bool]
+    let peaks: [StemKind: StemPeaks]
+    let grid: Grid?
+    let loopRange: ClosedRange<Double>?
+    let loopOn: Bool
+    let loopLabel: String?
+    let drumStart: Double?
+    let regions: [Region]
+    let selected: Set<UUID>
+    let clips: [Clip]
+    let segs: [String: [Seg]]
+    let viewStart: Double
+    let viewLength: Double
+
+    var body: some View {
+        Canvas(rendersAsynchronously: false) { ctx, size in
+            draw(ctx, size)
+        }
+    }
+
+    private func x(_ t: Double, _ w: CGFloat) -> CGFloat { CGFloat((t - viewStart) / viewLength) * w }
+
+    private func draw(_ ctx: GraphicsContext, _ size: CGSize) {
+        let w = size.width
+        let laneArea = size.height - rulerHeight
+        let laneH = laneArea / CGFloat(max(1, lanes.count))
+        let viewEnd = viewStart + viewLength
+
+        // Ruler background.
+        ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: rulerHeight)), with: .color(Theme.panel2))
+
+        // Lane backgrounds.
+        for (i, lane) in lanes.enumerated() {
+            let r = CGRect(x: 0, y: rulerHeight + CGFloat(i) * laneH, width: w, height: laneH)
+            ctx.fill(Path(r), with: .color(lane.color.opacity(i % 2 == 0 ? 0.035 : 0.05)))
+        }
+
+        // Bar grid: bars, then beats when there is room.
+        if let g = grid {
+            let pxPerBar = w / CGFloat(viewLength / g.bar)
+            let labelEvery = [1, 2, 4, 8, 16, 32, 64].first { CGFloat($0) * pxPerBar >= 38 } ?? 128
+            let firstBar = g.barIndex(at: viewStart)
+            let lastBar = g.barIndex(at: viewEnd) + 1
+            if pxPerBar / 4 > 9 {
+                var beats = Path()
+                for b in firstBar...lastBar {
+                    for k in 1..<4 {
+                        let xx = x(g.time(g.barBeat(b) + Double(k)), w)
+                        beats.move(to: CGPoint(x: xx, y: rulerHeight))
+                        beats.addLine(to: CGPoint(x: xx, y: size.height))
+                    }
+                }
+                ctx.stroke(beats, with: .color(.white.opacity(0.035)), lineWidth: 1)
+            }
+            var bars = Path(), phrases = Path()
+            for b in firstBar...lastBar {
+                let xx = x(g.barStart(b), w)
+                guard xx >= -2, xx <= w + 2 else { continue }
+                let isPhrase = (b - 1) % 16 == 0
+                let p = Path { $0.move(to: CGPoint(x: xx, y: isPhrase ? 2 : 12)); $0.addLine(to: CGPoint(x: xx, y: size.height)) }
+                if isPhrase { phrases.addPath(p) } else if (b - 1) % labelEvery == 0 || pxPerBar > 14 { bars.addPath(p) }
+                if (b - 1) % labelEvery == 0 && b >= 1 {
+                    ctx.draw(Text("\(b)").font(Theme.mono(10, isPhrase ? .bold : .medium))
+                                .foregroundColor(isPhrase ? Theme.text : Theme.dim),
+                             at: CGPoint(x: xx + 4, y: 9), anchor: .leading)
+                }
+            }
+            ctx.stroke(bars, with: .color(.white.opacity(0.09)), lineWidth: 1)
+            ctx.stroke(phrases, with: .color(.white.opacity(0.2)), lineWidth: 1)
+
+            // Warp markers (bars pinned to real hits).
+            for pt in g.points where abs(pt.beat) > 1e-6 {
+                let px = x(pt.time, w)
+                guard px >= -6, px <= w + 6 else { continue }
+                var d = Path()
+                d.move(to: CGPoint(x: px, y: 12)); d.addLine(to: CGPoint(x: px + 4, y: 16))
+                d.addLine(to: CGPoint(x: px, y: 20)); d.addLine(to: CGPoint(x: px - 4, y: 16)); d.closeSubpath()
+                ctx.fill(d, with: .color(Theme.accent.opacity(0.55)))
+            }
+
+            // The anchor downbeat ("1") the grid is counted from.
+            let ax = x(g.anchor, w)
+            if ax >= 0 && ax <= w {
+                ctx.fill(Path(CGRect(x: ax - 0.75, y: rulerHeight, width: 1.5, height: laneArea)),
+                         with: .color(Theme.accent.opacity(0.35)))
+                let flag = CGRect(x: ax - 15, y: 2, width: 13, height: 12)
+                ctx.fill(Path(roundedRect: flag, cornerRadius: 2), with: .color(Theme.accent))
+                ctx.draw(Text("1").font(Theme.mono(9, .heavy)).foregroundColor(.black), at: CGPoint(x: flag.midX, y: flag.midY))
+            }
+
+            // Area before bar 1 (pickup) shaded.
+            if g.firstBar > viewStart {
+                let xx = x(g.firstBar, w)
+                ctx.fill(Path(CGRect(x: 0, y: rulerHeight, width: max(0, xx), height: laneArea)), with: .color(.black.opacity(0.25)))
+            }
+        }
+
+        // Waveforms: true signed min/max contour per Retina pixel, with a brighter RMS core.
+        let colStep: CGFloat = 0.5
+        let cols = Int((w / colStep).rounded(.up)) + 1
+        for (i, lane) in lanes.enumerated() {
+            let top = rulerHeight + CGFloat(i) * laneH
+            let mid = top + laneH / 2
+            let half = laneH / 2 - 6
+            let on = audible[lane.id] ?? true
+            let laneSegs = segs[lane.id]
+            let sources = lane.stems.compactMap { peaks[$0] }
+            guard let first = sources.first else { continue }
+            let sr = first.sampleRate
+            let samplesPerCol = viewLength * sr / Double(cols - 1)
+            let levels = sources.map { $0.level(samplesPerColumn: samplesPerCol) }
+            // A summed lane (instrumental) can peak above any single stem.
+            let norm = max(sources.count > 1 ? (sources.map(\.maxPeak).max() ?? 1) * 1.5 : first.maxPeak, 0.02)
+            let scale = half / CGFloat(norm)
+
+            var tops = [CGPoint](), bottoms = [CGPoint](), rmsTop = [CGPoint](), rmsBottom = [CGPoint]()
+            tops.reserveCapacity(cols); bottoms.reserveCapacity(cols)
+            for c in 0..<cols {
+                let x = CGFloat(c) * colStep
+                let tl = viewStart + Double(x) / Double(w) * viewLength
+                // Edited lane: read where this moment's piece comes from (nothing = deleted).
+                guard let st = laneSegs == nil ? tl : grid?.sourceTime(tl, laneSegs) else {
+                    tops.append(CGPoint(x: x, y: mid - 0.25)); bottoms.append(CGPoint(x: x, y: mid + 0.25))
+                    rmsTop.append(CGPoint(x: x, y: mid - 0.25)); rmsBottom.append(CGPoint(x: x, y: mid + 0.25))
+                    continue
+                }
+                let s0 = st * sr
+                let s1 = s0 + samplesPerCol
+                var lo: Float = 0, hi: Float = 0, rm: Float = 0
+                var any = false
+                for l in levels {
+                    let bs = Double(l.binSize)
+                    let count = l.mins.count
+                    if samplesPerCol < bs {
+                        // Zoomed past the finest bins: interpolate between bin centres.
+                        let f = s0 / bs - 0.5
+                        let a = Int(floor(f)), t = Float(f - floor(f))
+                        guard a + 1 >= 0, a < count else { continue }
+                        let ia = max(0, min(count - 1, a)), ib = max(0, min(count - 1, a + 1))
+                        lo += l.mins[ia] + (l.mins[ib] - l.mins[ia]) * t
+                        hi += l.maxs[ia] + (l.maxs[ib] - l.maxs[ia]) * t
+                        rm += l.rms[ia] + (l.rms[ib] - l.rms[ia]) * t
+                        any = true
+                    } else {
+                        let a = max(0, Int(s0 / bs)), b = min(count, max(a + 1, Int(s1 / bs)))
+                        guard b > a else { continue }
+                        var mn: Float = .infinity, mx: Float = -.infinity, sq: Float = 0
+                        for j in a..<b { mn = min(mn, l.mins[j]); mx = max(mx, l.maxs[j]); sq += l.rms[j] * l.rms[j] }
+                        lo += mn; hi += mx; rm += (sq / Float(b - a)).squareRoot()
+                        any = true
+                    }
+                }
+                if !any { lo = 0; hi = 0; rm = 0 }
+                let yTop = mid - max(0.25, CGFloat(min(hi, norm)) * scale)
+                let yBot = mid - min(-0.25, CGFloat(max(lo, -norm)) * scale)
+                tops.append(CGPoint(x: x, y: yTop))
+                bottoms.append(CGPoint(x: x, y: yBot))
+                let r = CGFloat(min(rm, norm)) * scale
+                rmsTop.append(CGPoint(x: x, y: max(yTop, mid - r)))
+                rmsBottom.append(CGPoint(x: x, y: min(yBot, mid + r)))
+            }
+            func band(_ upper: [CGPoint], _ lower: [CGPoint]) -> Path {
+                var p = Path()
+                guard let f = upper.first else { return p }
+                p.move(to: f)
+                for pt in upper.dropFirst() { p.addLine(to: pt) }
+                for pt in lower.reversed() { p.addLine(to: pt) }
+                p.closeSubpath()
+                return p
+            }
+            func line(_ pts: [CGPoint]) -> Path {
+                var p = Path()
+                guard let f = pts.first else { return p }
+                p.move(to: f)
+                for pt in pts.dropFirst() { p.addLine(to: pt) }
+                return p
+            }
+            let color = on ? lane.color : Color.gray
+            let laneRect = CGRect(x: 0, y: top, width: w, height: laneH)
+            let outer = band(tops, bottoms)
+            ctx.fill(outer, with: .linearGradient(
+                Gradient(colors: [color.opacity(on ? 0.55 : 0.18), color.opacity(on ? 0.22 : 0.08), color.opacity(on ? 0.55 : 0.18)]),
+                startPoint: CGPoint(x: 0, y: laneRect.minY + 6), endPoint: CGPoint(x: 0, y: laneRect.maxY - 6)))
+            ctx.fill(band(rmsTop, rmsBottom), with: .color(color.opacity(on ? 0.92 : 0.28)))
+            ctx.stroke(line(tops), with: .color(color.opacity(on ? 0.9 : 0.3)), lineWidth: 0.6)
+            ctx.stroke(line(bottoms), with: .color(color.opacity(on ? 0.9 : 0.3)), lineWidth: 0.6)
+            // Lane separator.
+            ctx.fill(Path(CGRect(x: 0, y: top, width: w, height: 1)), with: .color(Theme.line))
+        }
+
+        // Where the drums come in: the grid is counted from here.
+        if let ds = drumStart, ds > viewStart, ds < viewEnd {
+            let xx = x(ds, w)
+            var tri = Path()
+            tri.move(to: CGPoint(x: xx - 5, y: 12))
+            tri.addLine(to: CGPoint(x: xx + 5, y: 12))
+            tri.addLine(to: CGPoint(x: xx, y: 20))
+            tri.closeSubpath()
+            ctx.fill(tri, with: .color(Theme.drums))
+        }
+
+        // Regions marked on the lanes.
+        if let g = grid {
+            for r in regions {
+                guard let li = lanes.firstIndex(where: { $0.id == r.laneId }) else { continue }
+                let lane = lanes[li]
+                let x0 = x(g.barStart(r.startBar), w), x1 = x(g.barStart(r.endBar), w)
+                guard x1 >= 0, x0 <= w else { continue }
+                let top = rulerHeight + CGFloat(li) * laneH
+                let rect = CGRect(x: x0, y: top + 3, width: x1 - x0, height: laneH - 6)
+                let sel = selected.contains(r.id)
+                ctx.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(lane.color.opacity(sel ? 0.26 : 0.16)))
+                ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.75, dy: 0.75), cornerRadius: 4),
+                           with: .color(sel ? Color.white : lane.color), lineWidth: sel ? 2 : 1.2)
+                let tag = CGRect(x: max(x0, 0) + 4, y: top + 7, width: 0, height: 0)
+                if x1 - x0 > 34 {
+                    ctx.draw(Text("\(r.startBar)–\(r.endBar - 1)").font(Theme.mono(9.5, .bold)).foregroundColor(sel ? .white : lane.color),
+                             at: CGPoint(x: tag.minX, y: tag.minY + 5), anchor: .leading)
+                }
+                for xx in [x0, x1] {
+                    ctx.fill(Path(roundedRect: CGRect(x: xx - 2, y: rect.midY - 12, width: 4, height: 24), cornerRadius: 2),
+                             with: .color(sel ? Color.white : lane.color))
+                }
+            }
+        }
+
+        // Edited pieces: thin frames, selected ones white.
+        if let g = grid {
+            for c in clips {
+                guard let li = lanes.firstIndex(where: { $0.id == c.laneId }) else { continue }
+                let lane = lanes[li]
+                let x0 = x(g.barStart(c.startBar), w), x1 = x(g.barStart(c.endBar), w)
+                guard x1 >= 0, x0 <= w else { continue }
+                let top = rulerHeight + CGFloat(li) * laneH
+                let rect = CGRect(x: x0, y: top + 2, width: x1 - x0, height: laneH - 4)
+                let sel = selected.contains(c.id)
+                if sel { ctx.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(Color.white.opacity(0.08))) }
+                ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 3),
+                           with: .color(sel ? Color.white : lane.color.opacity(0.55)), lineWidth: sel ? 2 : 1)
+            }
+        }
+
+        // Loop: only in the ruler's lower strip.
+        if let r = loopRange {
+            let x0 = x(r.lowerBound, w), x1 = x(r.upperBound, w)
+            let band = CGRect(x: x0, y: loopBandTop, width: x1 - x0, height: rulerHeight - loopBandTop - 3)
+            if loopOn {
+                ctx.fill(Path(roundedRect: band, cornerRadius: 3), with: .color(Theme.loop.opacity(0.9)))
+            } else {
+                ctx.fill(Path(roundedRect: band, cornerRadius: 3), with: .color(Theme.loop.opacity(0.12)))
+                ctx.stroke(Path(roundedRect: band.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 3), with: .color(Theme.loop.opacity(0.45)), lineWidth: 1)
+            }
+            for xx in [x0, x1] {
+                ctx.fill(Path(roundedRect: CGRect(x: xx - 2, y: loopBandTop - 2, width: 4, height: band.height + 4), cornerRadius: 2),
+                         with: .color(Theme.loop.opacity(loopOn ? 1 : 0.5)))
+            }
+            if let loopLabel, x1 - x0 > 50 {
+                ctx.draw(Text(loopLabel).font(Theme.mono(9, .bold)).foregroundColor(loopOn ? .black : Theme.loop.opacity(0.7)),
+                         at: CGPoint(x: max(x0, 0) + 6, y: band.midY), anchor: .leading)
+            }
+        }
+    }
+}
+
+/// The playhead line; watches the play clock on its own.
+struct PlayheadLayer: View {
+    @ObservedObject var clock: PlayClock
+    let viewStart: Double
+    let viewLength: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            let xx = CGFloat((clock.position - viewStart) / viewLength) * geo.size.width
+            if xx >= 0 && xx <= geo.size.width {
+                ZStack(alignment: .top) {
+                    Rectangle().fill(Color.white).frame(width: 1.5)
+                    Triangle().fill(Color.white).frame(width: 11, height: 7)
+                }
+                .frame(width: 11)
+                .offset(x: xx - 5.5)
+                .shadow(color: .black.opacity(0.6), radius: 2)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+struct Triangle: Shape {
+    func path(in r: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: r.minX, y: r.minY))
+            p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+            p.addLine(to: CGPoint(x: r.midX, y: r.maxY))
+            p.closeSubpath()
+        }
+    }
+}
+
+// MARK: - Mouse, trackpad and scroll handling
+
+final class TimelineNSView: NSView {
+    weak var coordinator: TimelineInteraction.Coordinator?
+    private var tracking: NSTrackingArea?
+
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let t = NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect, .cursorUpdate],
+                               owner: self, userInfo: nil)
+        addTrackingArea(t)
+        tracking = t
+    }
+
+    private func point(_ e: NSEvent) -> CGPoint { convert(e.locationInWindow, from: nil) }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func mouseDown(with e: NSEvent) {
+        // Clicking the timeline takes the keyboard away from the BPM field.
+        window?.makeFirstResponder(self)
+        coordinator?.down(point(e), size: bounds.size, clicks: e.clickCount, mods: e.modifierFlags)
+    }
+    /// Fallback when the shortcut was not taken by a button: space, L and the arrows.
+    override func keyDown(with e: NSEvent) {
+        guard let c = coordinator else { return super.keyDown(with: e) }
+        let cmd = e.modifierFlags.contains(.command)
+        if cmd {
+            switch e.charactersIgnoringModifiers?.lowercased() {
+            case "z": e.modifierFlags.contains(.shift) ? c.session.redo() : c.session.undo(); return
+            case "d": c.session.duplicateSelected(); return
+            case "a": c.session.selectAll(); return
+            default: return super.keyDown(with: e)
+            }
+        }
+        switch e.keyCode {
+        case 49: c.session.player.toggle()
+        case 37: c.session.loopEnabled.toggle()
+        case 123: c.session.shiftLoop(-1)
+        case 124: c.session.shiftLoop(1)
+        case 51, 117: c.deleteSelection()
+        case 53: c.session.selected = []
+        default: super.keyDown(with: e)
+        }
+    }
+
+    override func mouseDragged(with e: NSEvent) { coordinator?.drag(point(e), size: bounds.size) }
+    override func mouseUp(with e: NSEvent) { coordinator?.up(point(e), size: bounds.size) }
+    override func mouseMoved(with e: NSEvent) { coordinator?.cursor(at: point(e), size: bounds.size).set() }
+    override func cursorUpdate(with e: NSEvent) { coordinator?.cursor(at: point(e), size: bounds.size).set() }
+    override func scrollWheel(with e: NSEvent) { coordinator?.scroll(e, at: point(e), size: bounds.size) }
+    override func magnify(with e: NSEvent) { coordinator?.magnify(e.magnification, at: point(e), size: bounds.size) }
+}
+
+struct TimelineInteraction: NSViewRepresentable {
+    let session: Session
+
+    func makeCoordinator() -> Coordinator { Coordinator(session: session) }
+
+    func makeNSView(context: Context) -> TimelineNSView {
+        let v = TimelineNSView()
+        v.coordinator = context.coordinator
+        return v
+    }
+
+    func updateNSView(_ v: TimelineNSView, context: Context) {
+        context.coordinator.session = session
+        v.coordinator = context.coordinator
+    }
+
+    @MainActor
+    final class Coordinator {
+        var session: Session
+        init(session: Session) { self.session = session }
+
+        /// What a drag edits: the loop (ruler) or a region (lane).
+        private enum Target: Equatable { case loop; case region(UUID) }
+
+        private enum Drag {
+            case none, scrub
+            case pending(Double, laneId: String?, clip: UUID?)  // empty spot or an unselected piece
+            case pendingLoop(Double)
+            case pendingRegion(Double, UUID)                   // click = cut there
+            case pendingClip(Double, UUID)                     // a selected piece
+            case create(Double, Target)
+            case move(Double, Int, Int, Target)                // loop: t0, original start, bars
+            case regions(Double, CGFloat, [Region])            // t0, y0, their state at the start
+            case clips(Double, [Clip])                         // t0, their state at the start
+            case resizeStart(Int, Target)                      // fixed end (exclusive)
+            case resizeEnd(Int, Target)                        // fixed start
+        }
+
+        private var drag: Drag = .none
+        private var downPoint: CGPoint = .zero
+        private var downMods: NSEvent.ModifierFlags = []
+
+        private func time(_ x: CGFloat, _ w: CGFloat) -> Double {
+            session.viewStart + Double(x / max(w, 1)) * session.viewLength
+        }
+
+        private func xOf(_ t: Double, _ w: CGFloat) -> CGFloat {
+            CGFloat((t - session.viewStart) / session.viewLength) * w
+        }
+
+        private func laneIndex(at p: CGPoint, _ size: CGSize) -> Int? {
+            let n = session.lanes.count
+            let h = (size.height - rulerHeight) / CGFloat(max(1, n))
+            let i = Int((p.y - rulerHeight) / h)
+            return p.y >= rulerHeight && i >= 0 && i < n ? i : nil
+        }
+
+        private func lane(at p: CGPoint, _ size: CGSize) -> Lane? {
+            laneIndex(at: p, size).map { session.lanes[$0] }
+        }
+
+        private func laneHeight(_ size: CGSize) -> CGFloat {
+            (size.height - rulerHeight) / CGFloat(max(1, session.lanes.count))
+        }
+
+        private enum Hit { case startEdge(Target, Int, Int), endEdge(Target, Int, Int), inside(Target, Int, Int), empty }
+
+        /// The loop band in the ruler, or a region on the lane (regions lie above the pieces).
+        private func hit(_ p: CGPoint, _ size: CGSize) -> Hit {
+            guard let g = session.grid else { return .empty }
+            var spans: [(Target, Int, Int)] = []
+            if p.y < rulerHeight {
+                guard p.y >= loopBandTop - 4, let l = session.loop else { return .empty }
+                spans = [(.loop, l.startBar, l.bars)]
+            } else if let lane = lane(at: p, size) {
+                spans = session.regions.filter { $0.laneId == lane.id }
+                    .sorted { session.selected.contains($0.id) && !session.selected.contains($1.id) }
+                    .map { (.region($0.id), $0.startBar, $0.bars) }
+            }
+            for (tg, s, n) in spans {
+                let x0 = xOf(g.barStart(s), size.width), x1 = xOf(g.barStart(s + n), size.width)
+                if abs(p.x - x0) < 6 { return .startEdge(tg, s, n) }
+                if abs(p.x - x1) < 6 { return .endEdge(tg, s, n) }
+            }
+            for (tg, s, n) in spans {
+                let x0 = xOf(g.barStart(s), size.width), x1 = xOf(g.barStart(s + n), size.width)
+                if p.x > x0 && p.x < x1 { return .inside(tg, s, n) }
+            }
+            return .empty
+        }
+
+        /// The top piece under the mouse on an edited lane.
+        private func clip(at p: CGPoint, _ size: CGSize) -> Clip? {
+            guard let g = session.grid, let lane = lane(at: p, size) else { return nil }
+            let bar = g.barIndex(at: time(p.x, size.width))
+            return session.clips.last { $0.laneId == lane.id && bar >= $0.startBar && bar < $0.endBar }
+        }
+
+        func cursor(at p: CGPoint, size: CGSize) -> NSCursor {
+            switch hit(p, size) {
+            case .startEdge, .endEdge: return .resizeLeftRight
+            case .inside(.region, _, _): return NSEvent.modifierFlags.contains(.option) ? .dragCopy : .pointingHand
+            case .inside: return .openHand
+            case .empty:
+                if p.y < loopBandTop - 4 { return .pointingHand }
+                if p.y < rulerHeight { return .crosshair }
+                if let c = clip(at: p, size), session.selected.contains(c.id) {
+                    return NSEvent.modifierFlags.contains(.option) ? .dragCopy : .openHand
+                }
+                return .arrow
+            }
+        }
+
+        private func apply(_ target: Target, start: Int, bars: Int) {
+            switch target {
+            case .loop:
+                if let l = session.clampLoop(LoopSelection(startBar: start, bars: bars)), l != session.loop { session.loop = l }
+            case .region(let id):
+                session.setRegion(id, startBar: start, bars: bars)
+            }
+        }
+
+        func down(_ p: CGPoint, size: CGSize, clicks: Int, mods: NSEvent.ModifierFlags) {
+            downPoint = p
+            downMods = mods
+            let t = time(p.x, size.width)
+            guard let g = session.grid else { session.player.seek(t); drag = .scrub; return }
+            let h = hit(p, size)
+            if clicks == 2 {
+                if p.y < rulerHeight {
+                    // Double-click on the loop removes it; elsewhere in the strip: a one-bar loop.
+                    if case .inside(.loop, _, _) = h { session.loop = nil }
+                    else if p.y >= loopBandTop - 4, let l = session.clampLoop(LoopSelection(startBar: g.barIndex(at: t), bars: 1)) {
+                        session.loop = l
+                        session.loopEnabled = true
+                    }
+                } else if let lane = lane(at: p, size), case .empty = h {
+                    session.addRegion(lane: lane, startBar: g.barIndex(at: t), bars: 1)
+                }
+                drag = .none
+                return
+            }
+            // Bar numbers strip: scrub.
+            if p.y < loopBandTop - 4 {
+                session.player.seek(t)
+                drag = .scrub
+                return
+            }
+            switch h {
+            case .startEdge(let tg, let s, let n):
+                selectRegion(tg, mods); session.checkpoint(); drag = .resizeStart(s + n, tg)
+            case .endEdge(let tg, let s, _):
+                selectRegion(tg, mods); session.checkpoint(); drag = .resizeEnd(s, tg)
+            case .inside(.loop, _, _):
+                drag = .pendingLoop(t)
+            case .inside(.region(let id), _, _):
+                selectRegion(.region(id), mods)
+                drag = .pendingRegion(t, id)
+            case .empty:
+                guard p.y >= rulerHeight else { drag = .pending(t, laneId: nil, clip: nil); return }
+                let c = clip(at: p, size)
+                if let c, session.selected.contains(c.id) {
+                    if mods.contains(.shift) { session.selected.remove(c.id); drag = .none; return }
+                    drag = .pendingClip(t, c.id)
+                } else if let c, mods.contains(.shift) {
+                    session.selected.insert(c.id)
+                    drag = .none
+                } else {
+                    drag = .pending(t, laneId: lane(at: p, size)?.id, clip: c?.id)
+                }
+            }
+        }
+
+        private func selectRegion(_ tg: Target, _ mods: NSEvent.ModifierFlags) {
+            guard case .region(let id) = tg else { return }
+            if mods.contains(.shift) {
+                if session.selected.contains(id) { session.selected.remove(id) } else { session.selected.insert(id) }
+            } else if !session.selected.contains(id) {
+                session.selected = [id]
+            }
+        }
+
+        func drag(_ p: CGPoint, size: CGSize) {
+            let t = time(p.x, size.width)
+            let moved = abs(p.x - downPoint.x) > 3 || abs(p.y - downPoint.y) > 3
+            guard let g = session.grid else {
+                if case .scrub = drag { session.player.seek(t) }
+                return
+            }
+            func span(_ a: Double, _ b: Double) -> (Int, Int) {
+                let s = g.nearestBarLine(min(a, b))
+                let e = max(s + 1, g.nearestBarLine(max(a, b)))
+                return (s, e - s)
+            }
+            func barDelta(_ t0: Double) -> Int { Int(((g.beat(at: t) - g.beat(at: t0)) / 4).rounded()) }
+            switch drag {
+            case .none: break
+            case .scrub: session.player.seek(t)
+            case .pending(let t0, let laneId, _):
+                guard moved else { return }
+                if let laneId, let lane = session.lanes.first(where: { $0.id == laneId }) {
+                    let (s, n) = span(t0, t)
+                    let id = session.addRegion(lane: lane, startBar: s, bars: n)
+                    drag = .create(t0, .region(id))
+                } else {
+                    let (s, n) = span(t0, t)
+                    session.loopEnabled = true
+                    apply(.loop, start: s, bars: n)
+                    drag = .create(t0, .loop)
+                }
+            case .pendingLoop(let t0):
+                guard moved else { return }
+                drag = .move(t0, session.loop?.startBar ?? 1, session.loop?.bars ?? 1, .loop)
+                NSCursor.closedHand.set()
+            case .pendingRegion(let t0, _):
+                guard moved else { return }
+                let base: [Region]
+                if downMods.contains(.option) {
+                    base = session.duplicateSelected(place: false).regions
+                } else {
+                    session.checkpoint()
+                    base = session.regions.filter { session.selected.contains($0.id) }
+                }
+                drag = .regions(t0, downPoint.y, base)
+                NSCursor.closedHand.set()
+            case .pendingClip(let t0, _):
+                guard moved else { return }
+                let base: [Clip]
+                if downMods.contains(.option) {
+                    base = session.duplicateSelected(place: false).clips
+                } else {
+                    session.checkpoint()
+                    base = session.clips.filter { session.selected.contains($0.id) }
+                }
+                drag = .clips(t0, base)
+                NSCursor.closedHand.set()
+            case .create(let t0, let tg):
+                let (s, n) = span(t0, t)
+                apply(tg, start: s, bars: n)
+            case .move(let t0, let s0, let n, let tg):
+                apply(tg, start: s0 + barDelta(t0), bars: n)
+            case .regions(let t0, let y0, let base):
+                let lanes = Int(((p.y - y0) / laneHeight(size)).rounded())
+                session.moveRegions(base, bars: barDelta(t0), lanes: lanes)
+            case .clips(let t0, let base):
+                session.moveClips(base, bars: barDelta(t0))
+            case .resizeStart(let end, let tg):
+                let s = max(1, min(g.nearestBarLine(t), end - 1))
+                apply(tg, start: s, bars: end - s)
+            case .resizeEnd(let start, let tg):
+                let e = max(g.nearestBarLine(t), start + 1)
+                apply(tg, start: start, bars: e - start)
+            }
+        }
+
+        func up(_ p: CGPoint, size: CGSize) {
+            let t = time(p.x, size.width)
+            switch drag {
+            case .pending(_, _, let clip):
+                // A click on a piece selects it; on empty space it moves the playhead.
+                if let clip { session.selected = [clip] } else { session.selected = []; session.player.seek(t) }
+            case .pendingLoop: session.player.seek(t)
+            case .pendingRegion(_, let id):
+                // Click inside a region: cut the audio at its start and end.
+                if !downMods.contains(.shift) { session.cutAtRegion(id) }
+            case .pendingClip(_, let id):
+                session.selected = [id]
+            default: break
+            }
+            drag = .none
+        }
+
+        func deleteSelection() { session.deleteSelected() }
+
+        func scroll(_ e: NSEvent, at p: CGPoint, size: CGSize) {
+            let w = max(size.width, 1)
+            let scale: CGFloat = e.hasPreciseScrollingDeltas ? 1 : 12
+            if e.modifierFlags.contains(.command) || e.modifierFlags.contains(.option) {
+                let f = exp(Double(-e.scrollingDeltaY * scale) * 0.01)
+                session.zoom(by: f, around: time(p.x, w))
+                return
+            }
+            let dx = abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) ? e.scrollingDeltaX : e.scrollingDeltaY
+            session.scroll(by: -Double(dx * scale / w) * session.viewLength)
+        }
+
+        func magnify(_ m: CGFloat, at p: CGPoint, size: CGSize) {
+            session.zoom(by: Double(1 / (1 + m)), around: time(p.x, max(size.width, 1)))
+        }
+    }
+}
+
+/// Whole-song overview with the visible window, the loop and the playhead.
+struct OverviewStrip: View {
+    @ObservedObject var session: Session
+    @ObservedObject var clock: PlayClock
+    let peaks: [StemKind: StemPeaks]
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let d = max(session.duration, 0.001)
+            ZStack(alignment: .topLeading) {
+                Canvas { ctx, size in
+                    drawOverview(ctx, size)
+                }
+                // Visible window.
+                let vx = CGFloat(session.viewStart / d) * w
+                let vw = max(6, CGFloat(session.viewLength / d) * w)
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(Color.white.opacity(0.55), lineWidth: 1)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.06)))
+                    .frame(width: vw, height: h - 2)
+                    .offset(x: vx, y: 1)
+                Rectangle().fill(Color.white).frame(width: 1.5, height: h)
+                    .offset(x: CGFloat(clock.position / d) * w)
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { v in
+                let t = Double(v.location.x / w) * d
+                session.viewStart = max(0, min(t - session.viewLength / 2, d - session.viewLength))
+            })
+        }
+    }
+
+    private func drawOverview(_ ctx: GraphicsContext, _ size: CGSize) {
+        let d = max(session.duration, 0.001)
+        let lanes = Lane.lanes(for: .four)
+        let cols = Int(size.width)
+        guard cols > 0 else { return }
+        // Stacked: each stem's share of the column, in its color.
+        let all = lanes.compactMap { lane in peaks[lane.stems[0]].map { (lane, $0) } }
+        guard let ref = all.first?.1 else { return }
+        let globalMax = max(all.map { $0.1.maxPeak }.reduce(0, +), 0.05)
+        let bps = ref.sampleRate / Double(ref.levels[2].binSize)
+        var paths = Array(repeating: Path(), count: all.count)
+        for c in 0..<cols {
+            let lo = Int(Double(c) / Double(cols) * d * bps)
+            let hi = max(lo + 1, Int(Double(c + 1) / Double(cols) * d * bps))
+            var y = size.height
+            for (i, (_, pk)) in all.enumerated() {
+                var r: Float = 0
+                let lv = pk.levels[2]
+                for j in lo..<min(hi, lv.rms.count) { r = max(r, lv.rms[j]) }
+                let hgt = CGFloat(r / globalMax) * size.height * 1.6
+                paths[i].addRect(CGRect(x: CGFloat(c), y: y - hgt, width: 1, height: hgt))
+                y -= hgt
+            }
+        }
+        for (i, (lane, _)) in all.enumerated() { ctx.fill(paths[i], with: .color(lane.color.opacity(0.75))) }
+        if let r = session.loopRange {
+            let x0 = CGFloat(r.lowerBound / d) * size.width, x1 = CGFloat(r.upperBound / d) * size.width
+            ctx.fill(Path(CGRect(x: x0, y: 0, width: max(2, x1 - x0), height: size.height)), with: .color(Theme.loop.opacity(0.25)))
+            ctx.fill(Path(CGRect(x: x0, y: 0, width: max(2, x1 - x0), height: 3)), with: .color(Theme.loop))
+        }
+    }
+}

@@ -1,0 +1,262 @@
+import SwiftUI
+import AppKit
+
+/// Bottom deck: transport, loop, grid fixes and export, side by side.
+struct ControlDeck: View {
+    @EnvironmentObject var session: Session
+    @ObservedObject var clock: PlayClock
+
+    var body: some View {
+        let row = HStack(alignment: .top, spacing: 10) {
+            TransportCard(clock: clock)
+            GridCard()
+            ExportCard()
+        }
+        .fixedSize()
+        // Scrolls sideways only if the window is narrower than the deck.
+        ViewThatFits(in: .horizontal) {
+            row
+            ScrollView(.horizontal, showsIndicators: false) { row }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct Card<Content: View>: View {
+    let title: String
+    var accent: Color = Theme.dim
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.system(size: 9.5, weight: .heavy)).tracking(1.2).foregroundColor(accent)
+            content
+        }
+        .padding(11)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.panel))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.line))
+    }
+}
+
+// MARK: Transport
+
+struct TransportCard: View {
+    @EnvironmentObject var session: Session
+    @EnvironmentObject var library: Library
+    @ObservedObject var clock: PlayClock
+
+    var body: some View {
+        let player = session.player
+        Card(title: "TRANSPORT") {
+            HStack(spacing: 10) {
+                Button { player.toggle() } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(.black)
+                        .frame(width: 46, height: 46)
+                        .background(Circle().fill(player.isPlaying ? Theme.loop : Theme.text))
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.space, modifiers: [])
+                .help("Play / pause (space)")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(formatTime(clock.position)).font(Theme.mono(16, .semibold))
+                    if let g = library.selected?.grid {
+                        let p = g.position(clock.position)
+                        Text("BAR \(p.bar) · \(p.beat)").font(Theme.mono(10.5, .bold)).foregroundColor(Theme.accent)
+                    }
+                    HStack(spacing: 4) {
+                        Button { player.seek(session.loopRange.map { max(0, $0.lowerBound) } ?? 0) } label: {
+                            Image(systemName: "backward.end.fill")
+                        }
+                        .buttonStyle(PillButtonStyle(small: true))
+                        .help("Back to the loop start / song start (Enter = very start)")
+                        Button { session.follow.toggle() } label: { Text("FOLLOW") }
+                            .buttonStyle(PillButtonStyle(color: Theme.accent, active: session.follow, small: true))
+                            .help("The view pages along with the playhead")
+                        Button { session.zoomToFit() } label: { Image(systemName: "arrow.left.and.right") }
+                            .buttonStyle(PillButtonStyle(small: true))
+                            .help("Show the whole song")
+                        Button { session.loopEnabled.toggle() } label: {
+                            HStack(spacing: 3) { Image(systemName: "repeat"); Text("LOOP") }
+                        }
+                        .buttonStyle(PillButtonStyle(color: Theme.loop, active: session.loopEnabled && session.loop != nil, small: true))
+                        .keyboardShortcut("l", modifiers: [])
+                        .disabled(session.loop == nil)
+                        .modifier(DisabledDim())
+                        .help("Loop on/off (L). Draw the loop in the ruler; double-click it there to remove it.")
+                        Button { session.clickOn.toggle() } label: {
+                            HStack(spacing: 3) { Image(systemName: "metronome.fill"); Text("CLICK") }
+                        }
+                        .buttonStyle(PillButtonStyle(color: Theme.loop, active: session.clickOn, small: true))
+                        .keyboardShortcut("k", modifiers: [])
+                        .help("Metronome on the beat grid, higher click on the 1 (K)")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: Grid
+
+struct GridCard: View {
+    @EnvironmentObject var session: Session
+    @EnvironmentObject var library: Library
+    @State private var bpmText = ""
+    @FocusState private var bpmFocused: Bool
+
+    var body: some View {
+        let g = library.selected?.grid
+        Card(title: "BEAT GRID", accent: Theme.accent) {
+            HStack(spacing: 3) {
+                TextField("BPM", text: $bpmText)
+                    .textFieldStyle(.plain)
+                    .font(Theme.mono(12, .semibold))
+                    .foregroundColor(Theme.accent)
+                    .multilineTextAlignment(.center)
+                    .frame(width: 66, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.35)))
+                    .focused($bpmFocused)
+                    .onSubmit { commitBPM() }
+                    .help("Export tempo: loops are stretched to exactly this BPM")
+                Button("×2") { session.scaleBPM(2) }.buttonStyle(PillButtonStyle(small: true))
+                Button("÷2") { session.scaleBPM(0.5) }.buttonStyle(PillButtonStyle(small: true))
+                Button { session.autoWarp() } label: {
+                    HStack(spacing: 3) { Image(systemName: "wand.and.stars"); Text("AUTO WARP") }
+                }
+                .buttonStyle(PillButtonStyle(color: Theme.instrumental, small: true))
+                .help("Follow the hits from the 1 and pin every bar to its real downbeat")
+                Button("RESET") { session.resetGrid() }
+                    .buttonStyle(PillButtonStyle(color: .orange, small: true))
+                    .help("Back to the detected 1 and tempo, then AUTO WARP")
+            }
+            HStack(spacing: 3) {
+                Text("NUDGE").font(.system(size: 9, weight: .heavy)).foregroundColor(Theme.dim)
+                Button { session.nudge(-session.nudgeStep) } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(PillButtonStyle(color: Theme.loop, small: true))
+                    .keyboardShortcut("[", modifiers: [])
+                    .help("Move the music earlier against the grid ([)")
+                Button { session.nudge(session.nudgeStep) } label: { Image(systemName: "chevron.right") }
+                    .buttonStyle(PillButtonStyle(color: Theme.loop, small: true))
+                    .keyboardShortcut("]", modifiers: [])
+                    .help("Move the music later against the grid (])")
+                ForEach([(0.5, "½ BEAT"), (1.0, "1 BEAT"), (2.0, "½ BAR"), (4.0, "1 BAR")], id: \.0) { step, label in
+                    Button(label) { session.nudgeStep = step }
+                        .buttonStyle(PillButtonStyle(color: Theme.loop, active: session.nudgeStep == step, small: true))
+                }
+                let sh = library.selected?.contentShift ?? 0
+                Button(abs(sh) > 1e-9 ? formatShift(sh) : "0") { session.resetNudge() }
+                    .buttonStyle(PillButtonStyle(color: Theme.loop, small: true))
+                    .help("Total nudge — click to reset")
+            }
+        }
+        .disabled(g == nil)
+        .onAppear { syncText() }
+        .onChange(of: session.outputBPM) { _, _ in if !bpmFocused { syncText() } }
+        .onChange(of: library.selectedID) { _, _ in syncText() }
+        .onChange(of: bpmFocused) { _, f in if !f { commitBPM() } }
+    }
+
+    private func syncText() {
+        bpmText = session.outputBPM.map { String(format: "%.2f", $0) } ?? ""
+    }
+
+    private func commitBPM() {
+        let v = Double(bpmText.replacingOccurrences(of: ",", with: "."))
+        if let v, v >= 40, v <= 250, abs(v - (session.outputBPM ?? 0)) > 0.0001 { session.setBPM(v) }
+        syncText()
+    }
+}
+
+// MARK: Export
+
+struct ExportCard: View {
+    @EnvironmentObject var session: Session
+    @EnvironmentObject var library: Library
+
+    var body: some View {
+        let song = library.selected
+        Card(title: "EXPORT", accent: Theme.bass) {
+            HStack(spacing: 3) {
+                Button("STEMS") { session.exportSeparate.toggle() }
+                    .buttonStyle(PillButtonStyle(color: Theme.bass, active: session.exportSeparate, small: true))
+                    .help("One file per selected stem")
+                Button("MIX") { session.exportMix.toggle() }
+                    .buttonStyle(PillButtonStyle(color: Theme.bass, active: session.exportMix, small: true))
+                    .help("The selected stems in one file, following the faders")
+                Button("FADE \(Int(session.fadeMs)) ms") { session.fadeOn.toggle() }
+                    .buttonStyle(PillButtonStyle(color: Theme.bass, active: session.fadeOn, small: true))
+                    .help("Anti-click fade at both ends of the loop (right-click for length)")
+                    .contextMenu {
+                        ForEach([2.0, 3, 5, 10], id: \.self) { ms in Button("\(Int(ms)) ms") { session.fadeMs = ms } }
+                    }
+            }
+            HStack(spacing: 8) {
+                Button { session.export() } label: {
+                    HStack(spacing: 5) {
+                        if session.exporting { ProgressView().controlSize(.mini) }
+                        else { Image(systemName: "square.and.arrow.down.fill") }
+                        Text("LOOP")
+                    }
+                }
+                .buttonStyle(PillButtonStyle(color: Theme.bass, filled: true, small: true))
+                .keyboardShortcut("e", modifiers: .command)
+                .disabled(!session.canExport)
+                .modifier(DisabledDim())
+                .help("Export the loop from the selected stems (⌘E)")
+                Button { session.exportRegions() } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.stack.3d.down.forward.fill")
+                        Text("REGIONS \(session.regions.count)")
+                    }
+                }
+                .buttonStyle(PillButtonStyle(color: Theme.bass, filled: true, small: true))
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(session.regions.isEmpty || session.exporting)
+                .modifier(DisabledDim())
+                .help("Export every region, each from its own lane (⇧⌘E). Drag on a lane to mark one, Delete removes the selected one.")
+                if let song {
+                    Text(formatLabel(song)).font(Theme.mono(9)).foregroundColor(Theme.dim).lineLimit(2).fixedSize()
+                }
+            }
+        }
+    }
+
+    private func formatLabel(_ s: Song) -> String {
+        let ext = Exporter.outputExt(forSource: s.srcExt).uppercased()
+        let bits = s.srcFloat ? "\(s.srcBits)f" : "\(s.srcBits)"
+        return "\(ext) \(bits)-bit\n\(String(format: "%g", s.srcSampleRate / 1000)) kHz"
+    }
+}
+
+// MARK: Toast
+
+struct ToastView: View {
+    @EnvironmentObject var session: Session
+
+    var body: some View {
+        if let t = session.toast {
+            HStack(spacing: 12) {
+                Image(systemName: t.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .foregroundColor(t.isError ? .orange : Theme.bass)
+                Text(t.text).font(.system(size: 12.5, weight: .semibold))
+                if !t.files.isEmpty {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(t.files) }
+                        .buttonStyle(PillButtonStyle(color: Theme.bass, small: true))
+                }
+                Button { session.toast = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).foregroundColor(Theme.dim)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 11)
+            .background(Capsule().fill(Theme.panel2).shadow(color: .black.opacity(0.5), radius: 12, y: 4))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.08)))
+            .padding(.bottom, 150)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .task(id: t) {
+                try? await Task.sleep(nanoseconds: 7_000_000_000)
+                if session.toast == t { withAnimation { session.toast = nil } }
+            }
+        }
+    }
+}
