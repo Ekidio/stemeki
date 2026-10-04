@@ -131,7 +131,18 @@ enum SmartTempo {
             merged.append(r)
         }
         for (s, e) in merged {
-            guard s >= 0 else { out.append(pts[e]); continue }
+            // A beat outside the straight runs follows the tempo of its neighbours: a line through the 9 beats
+            // around it (a single attack's jitter evens out, a tempo that moves is followed).
+            guard s >= 0 else {
+                let lo = max(0, e - 4), hi = min(pts.count, e + 5)
+                if hi - lo >= 5 {
+                    let l = fitOnce(pts[lo..<hi]).line
+                    out.append((pts[e].b, l.a + l.p * pts[e].b))
+                } else {
+                    out.append(pts[e])
+                }
+                continue
+            }
             var f = fit(pts[s..<e])
             // Studio tempos are round: a whole (or half) BPM when the beats agree just as well.
             let bpm = 60 / f.line.p
