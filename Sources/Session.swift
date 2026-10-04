@@ -461,6 +461,38 @@ final class Session: ObservableObject {
         return (newC, newR)
     }
 
+    /// D: duplicate what is selected. In EDIT an uncut selection is cut first, then its piece is copied.
+    func quickDuplicate() {
+        if workMode == .edit {
+            let uncut = marks.filter { selected.contains($0.id) }.map(\.id)
+            var pieces = Set<UUID>()
+            for id in uncut {
+                cutAtRegion(id)
+                pieces.formUnion(selected)
+            }
+            if !uncut.isEmpty { selected = pieces.union(selected.filter { id in allClips.contains { $0.id == id } }) }
+        }
+        duplicateSelected()
+    }
+
+    /// The lane back to how it came out of the separation: no edits, default level, unmuted, exported.
+    func resetLane(_ lane: Lane) {
+        let hasEdits = allClips.contains { $0.laneId == lane.id } || marks.contains { $0.laneId == lane.id }
+        if hasEdits {
+            checkpoint()
+            marks.removeAll { $0.laneId == lane.id }
+            storeClips(allClips.filter { $0.laneId != lane.id })
+        }
+        setState(lane) { $0 = LaneState() }
+        selected = selected.filter { id in allClips.contains { $0.id == id } || allRegions.contains { $0.id == id } }
+    }
+
+    func laneIsPristine(_ lane: Lane) -> Bool {
+        let st = state(lane)
+        return !allClips.contains { $0.laneId == lane.id } && !marks.contains { $0.laneId == lane.id }
+            && st.gain == 1 && !st.mute && !st.solo && st.export
+    }
+
     /// Esc: nothing selected, no edit selection left on the lanes.
     func clearSelection() {
         selected = []

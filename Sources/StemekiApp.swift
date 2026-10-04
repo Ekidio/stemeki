@@ -35,6 +35,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { Session.current?.clearSelection() }
                 return nil
             }
+            // D (no modifiers): duplicate the selected piece / region.
+            if e.keyCode == 2, e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+               !(NSApp.keyWindow?.firstResponder is NSTextView) {
+                MainActor.assumeIsolated { Session.current?.quickDuplicate() }
+                return nil
+            }
             guard e.keyCode == 36 || e.keyCode == 76,
                   e.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   !(NSApp.keyWindow?.firstResponder is NSTextView) else { return e }

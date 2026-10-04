@@ -208,6 +208,16 @@ struct LaneHeader: View {
                 Fader(value: Binding(get: { Double(st.gain) }, set: { v in session.setState(lane) { $0.gain = Float(v) } }),
                       color: lane.color, level: audible ? level : 0)
                     .frame(height: 16)
+                Button {
+                    session.resetLane(lane)
+                } label: {
+                    HStack(spacing: 3) { Image(systemName: "arrow.counterclockwise"); Text("RESET") }
+                        .font(.system(size: 9, weight: .heavy))
+                }
+                .buttonStyle(PillButtonStyle(color: lane.color, small: true))
+                .disabled(session.laneIsPristine(lane))
+                .modifier(DisabledDim())
+                .help("Back to the freshly separated stem: edits on this lane removed, level, mute, solo and export reset (⌘Z undoes)")
             }
             .padding(.horizontal, 10)
         }
