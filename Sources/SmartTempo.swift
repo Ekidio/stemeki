@@ -55,17 +55,30 @@ enum SmartTempo {
 
     /// Least-squares line through the beats, then again without the worst tenth (a syncopated or doubled
     /// attack must not tilt it). Returns the line, the median and the 90th-percentile distance.
-    private static func fit(_ x: ArraySlice<(b: Double, t: Double)>, period: Double? = nil) -> (line: Line, med: Double, max: Double) {
+    private static func fit(_ x: ArraySlice<(b: Double, t: Double)>, period: Double? = nil) -> (line: Line, med: Double, max: Double, drift: Double) {
         let first = fitOnce(x, period: period)
         guard x.count >= 10 else { return first }
         let keep = x.sorted { abs($0.t - (first.line.a + first.line.p * $0.b)) < abs($1.t - (first.line.a + first.line.p * $1.b)) }
             .prefix(Int(Double(x.count) * 0.9))
         let l = fitOnce(ArraySlice(keep), period: period).line
         let r = x.map { abs($0.t - (l.a + l.p * $0.b)) }.sorted()
-        return (l, r[r.count / 2], r[Int(Double(r.count - 1) * 0.9)])
+        return (l, r[r.count / 2], r[Int(Double(r.count - 1) * 0.9)], drift(x, l))
     }
 
-    private static func fitOnce(_ x: ArraySlice<(b: Double, t: Double)>, period: Double? = nil) -> (line: Line, med: Double, max: Double) {
+    /// How far the beats wander away from the line on their way through it: the residuals smoothed over
+    /// 9 beats (a single attack's jitter averages out, a tempo that differs from the line does not).
+    private static func drift(_ x: ArraySlice<(b: Double, t: Double)>, _ l: Line) -> Double {
+        let r = x.map { $0.t - (l.a + l.p * $0.b) }
+        guard r.count >= 9 else { return 0 }
+        var worst = 0.0
+        for i in 0...(r.count - 9) {
+            let w = r[i..<(i + 9)].sorted()
+            worst = max(worst, abs(w[4]))
+        }
+        return worst
+    }
+
+    private static func fitOnce(_ x: ArraySlice<(b: Double, t: Double)>, period: Double? = nil) -> (line: Line, med: Double, max: Double, drift: Double) {
         let n = Double(x.count)
         let mb = x.map(\.b).reduce(0, +) / n, mt = x.map(\.t).reduce(0, +) / n
         var p = period ?? 0
@@ -76,27 +89,32 @@ enum SmartTempo {
         }
         let a = mt - p * mb
         let r = x.map { abs($0.t - (a + p * $0.b)) }.sorted()
-        return (Line(a: a, p: p), r[r.count / 2], r.last ?? 0)
+        return (Line(a: a, p: p), r[r.count / 2], r.last ?? 0, 0)
     }
 
     /// Stretches of one tempo become straight lines (two markers each); short or wandering stretches keep a
     /// marker on every beat.
     static func straighten(_ pts: [(b: Double, t: Double)]) -> [(b: Double, t: Double)] {
-        let tolMax = 0.022, tolMed = 0.010, minRun = 16
+        // A single attack may jitter (tolMax, tolMed), but the beats must not wander off the line (tolDrift):
+        // that is a tempo the line does not have, and it would be heard as drift.
+        let tolMax = 0.022, tolMed = 0.010, tolDrift = 0.005, minRun = 16
+        func holds(_ f: (line: Line, med: Double, max: Double, drift: Double)) -> Bool {
+            f.max <= tolMax && f.med <= tolMed && f.drift <= tolDrift
+        }
         var out: [(b: Double, t: Double)] = []
         var runs: [(Int, Int)] = []   // straight runs [s, e); (-1, i) = a single beat keeping its own marker
         var s = 0
         while s < pts.count {
             // Grow the run as long as one straight line still holds its beats.
             var e = min(pts.count, s + minRun)
-            guard e - s >= minRun, fit(pts[s..<e]).max <= tolMax else {
+            guard e - s >= minRun, holds(fit(pts[s..<e])) else {
                 runs.append((-1, s)); s += 1; continue
             }
             var step = 64
             while step >= 1 {
                 while e + step <= pts.count {
                     let f = fit(pts[s..<(e + step)])
-                    if f.max <= tolMax && f.med <= tolMed { e += step } else { break }
+                    if holds(f) { e += step } else { break }
                 }
                 step /= 2
             }
@@ -108,7 +126,7 @@ enum SmartTempo {
         for r in runs {
             if let last = merged.last, r.0 >= 0, last.0 >= 0, last.1 == r.0 {
                 let f = fit(pts[last.0..<r.1])
-                if f.max <= tolMax && f.med <= tolMed { merged[merged.count - 1] = (last.0, r.1); continue }
+                if holds(f) { merged[merged.count - 1] = (last.0, r.1); continue }
             }
             merged.append(r)
         }
@@ -119,7 +137,7 @@ enum SmartTempo {
             let bpm = 60 / f.line.p
             for cand in [bpm.rounded(), (bpm * 2).rounded() / 2] where abs(cand - bpm) < 0.03 {
                 let g = fit(pts[s..<e], period: 60 / cand)
-                if g.max <= tolMax && g.med <= f.med + 0.002 { f = g; break }
+                if holds(g) && g.med <= f.med + 0.002 { f = g; break }
             }
             let b0 = pts[s].b, b1 = pts[e - 1].b
             out.append((b0, f.line.a + f.line.p * b0))
