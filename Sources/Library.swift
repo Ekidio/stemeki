@@ -14,6 +14,11 @@ final class Library: ObservableObject {
     @Published private(set) var needsEngine = false
     /// Separated in this session and not yet analyzed: celebrated when they come out ready.
     private var freshlySeparated: Set<UUID> = []
+    /// The beat finder runs on the original song while it is being separated (it needs no stems):
+    /// its result waits here, or the analysis waits for it.
+    private var earlyBeats: [UUID: ([Double], [Double])] = [:]
+    private var beatsRunning: [UUID: Process] = [:]
+    private var beatsWaiting: [UUID: @MainActor ([Double]?, [Double]?) -> Void] = [:]
 
     let root: URL
     private var running: Process?
@@ -181,6 +186,9 @@ final class Library: ObservableObject {
             running?.terminate()
             running = nil
         }
+        beatsRunning.removeValue(forKey: id)?.terminate()
+        beatsWaiting[id] = nil
+        earlyBeats[id] = nil
         // Into the Trash, not deleted for good.
         try? FileManager.default.trashItem(at: stemsDir(song), resultingItemURL: nil)
         songs.removeAll { $0.id == id }
@@ -348,6 +356,7 @@ final class Library: ObservableObject {
                 return
             }
         }
+        startEarlyBeats(id, input: input, python: python)
         running = PythonRunner.run(python: python, script: "separate", args: [input, tmp.path]) { [weak self] line in
             if line.hasPrefix("PROGRESS "), let v = Double(line.dropFirst(9)) {
                 self?.progress[id] = v * 0.9
@@ -402,20 +411,51 @@ final class Library: ObservableObject {
         }
     }
 
+    /// Beat This! on the original song, alongside the separation (CPU next to the GPU's work).
+    private func startEarlyBeats(_ id: UUID, input: String, python: String) {
+        let p = PythonRunner.run(python: python, script: "beats", args: [input]) { _ in
+        } completion: { [weak self] status, log in
+            guard let self else { return }
+            self.beatsRunning[id] = nil
+            let r = Self.decodeBeats(status, log)
+            if let r { self.earlyBeats[id] = r }
+            // The analysis is already waiting: hand it over (or let it find the beats on the stems).
+            if let wait = self.beatsWaiting.removeValue(forKey: id) {
+                if let r { self.earlyBeats[id] = nil; wait(r.0, r.1) } else { self.findBeatsOnStems(id, then: wait) }
+            }
+        }
+        if let p { beatsRunning[id] = p }
+    }
+
+    private static func decodeBeats(_ status: Int32, _ log: String) -> ([Double], [Double])? {
+        struct Beats: Decodable { var beats: [Double]; var downbeats: [Double] }
+        let json = log.split(separator: "\n").last(where: { $0.hasPrefix("{") }).map(String.init) ?? ""
+        guard status == 0, let d = json.data(using: .utf8), let b = try? JSONDecoder().decode(Beats.self, from: d),
+              b.beats.count >= 16 else { return nil }
+        return (b.beats, b.downbeats)
+    }
+
+    /// The beats for the analysis: from the run alongside the separation when there was one, else on the stems.
+    private func findBeats(_ song: Song, python: String, done: @escaping @MainActor ([Double]?, [Double]?) -> Void) {
+        if let r = earlyBeats.removeValue(forKey: song.id) { done(r.0, r.1); return }
+        if beatsRunning[song.id] != nil { progress[song.id] = 0.97; beatsWaiting[song.id] = done; return }
+        findBeatsOnStems(song.id, then: done)
+    }
+
+    private func findBeatsOnStems(_ id: UUID, then done: @escaping @MainActor ([Double]?, [Double]?) -> Void) {
+        guard let song = songs.first(where: { $0.id == id }), let python else { done(nil, nil); return }
+        findBeatsOnStemsNow(song, python: python, done: done)
+    }
+
     /// Beat This! on the stems summed back into the mix. Without the model (an older engine) the grid comes
     /// from the drums as before.
-    private func findBeats(_ song: Song, python: String, done: @escaping @MainActor ([Double]?, [Double]?) -> Void) {
+    private func findBeatsOnStemsNow(_ song: Song, python: String, done: @escaping @MainActor ([Double]?, [Double]?) -> Void) {
         progress[song.id] = 0.97
         running = PythonRunner.run(python: python, script: "beats", args: [stemsDir(song).path]) { _ in
         } completion: { [weak self] status, log in
             self?.running = nil
-            struct Beats: Decodable { var beats: [Double]; var downbeats: [Double] }
-            let json = log.split(separator: "\n").last(where: { $0.hasPrefix("{") }).map(String.init) ?? ""
-            if status == 0, let d = json.data(using: .utf8), let b = try? JSONDecoder().decode(Beats.self, from: d), b.beats.count >= 16 {
-                done(b.beats, b.downbeats)
-            } else {
-                done(nil, nil)
-            }
+            let r = Self.decodeBeats(status, log)
+            done(r?.0, r?.1)
         }
     }
 
