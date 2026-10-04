@@ -37,6 +37,8 @@ struct StemekiLogo: View {
         s.draw(stemText, at: CGPoint(x: stemOffset, y: h * 0.02), anchor: .leading)
         // Badge (its left edge right after STEM; the skew leans the top to the right).
         let bx = stemW + gap, by = -bh / 2
+        // The badge in its own layer, so "EKI" can be cut out of it: the background shows through the letters.
+        g.drawLayer { g in
         var sh = g
         sh.opacity = bandsOpacity.min() ?? 1
         sh.translateBy(x: bx + bh / 2 * 0.25 + h * 0.07, y: by + h * 0.07)
@@ -62,11 +64,12 @@ struct StemekiLogo: View {
             }
             b.fill(wave, with: .color(.white.opacity(0.4)))
         }
-        // "EKI"
+        // "EKI", cut out.
         var e = g
+        e.blendMode = .destinationOut
         e.translateBy(x: bx + bw / 2 + h * 0.06, y: h * 0.02)
         e.scaleBy(x: ekiScale, y: ekiScale)
-        e.addFilter(.shadow(color: .black.opacity(0.35), radius: h * 0.03, x: h * 0.02, y: h * 0.03))
         e.draw(Text("EKI").font(.system(size: h * 0.8, weight: .black).italic()).foregroundColor(.white), at: .zero, anchor: .center)
+        }
     }
 }

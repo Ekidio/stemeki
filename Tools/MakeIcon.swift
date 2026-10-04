@@ -48,6 +48,8 @@ let skew = CGAffineTransform(a: 1, b: 0, c: 0.25, d: 1, tx: -(by + bh / 2) * 0.2
 func badgePath(_ dx: CGFloat, _ dy: CGFloat) -> CGPath {
     CGPath(rect: CGRect(x: bx + dx, y: by + dy, width: bw, height: bh), transform: [skew])
 }
+// The badge in its own layer, so "EKI" can be cut out of it: the icon's background shows through the letters.
+ctx.beginTransparencyLayer(auxiliaryInfo: nil)
 ctx.saveGState(); ctx.addPath(badgePath(22, -22)); ctx.setFillColor(NSColor.white.cgColor); ctx.fillPath(); ctx.restoreGState()
 ctx.saveGState(); ctx.addPath(badgePath(0, 0)); ctx.clip()
 for (i, c) in [pink, orange, green, blue].enumerated() {
@@ -73,11 +75,12 @@ ctx.setFillColor(NSColor.black.withAlphaComponent(0.18).cgColor)
 for i in 1..<4 { ctx.fill(CGRect(x: 0, y: by + CGFloat(i) * bh / 4 - 2, width: size, height: 4)) }
 ctx.restoreGState()
 
-let eki = NSAttributedString(string: "EKI", attributes: [
-    .font: italicHeavy(250), .foregroundColor: NSColor.white, .kern: -4,
-    .shadow: { let s = NSShadow(); s.shadowColor = NSColor.black.withAlphaComponent(0.35); s.shadowOffset = NSSize(width: 4, height: -6); s.shadowBlurRadius = 8; return s }()])
+let eki = NSAttributedString(string: "EKI", attributes: [.font: italicHeavy(250), .foregroundColor: NSColor.white, .kern: -4])
 let ez = eki.size()
+ctx.setBlendMode(.destinationOut)
 eki.draw(at: NSPoint(x: bx + (bw - ez.width) / 2 - 10, y: by + (bh - ez.height) / 2 + 6))
+ctx.setBlendMode(.normal)
+ctx.endTransparencyLayer()
 
 NSGraphicsContext.current = nil
 try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: output))

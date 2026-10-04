@@ -73,6 +73,8 @@ struct SplashView: View {
         let bw = 300 * unit, bh = 150 * unit
         let bx = cx + 34 * unit - bh / 2 * 0.25, by = cy - bh / 2
         let landed = clamp((t - 0.95) / 0.1)
+        // The badge in its own layer, so "EKI" can be cut out of it: the background shows through the letters.
+        ctx.drawLayer { ctx in
         // White offset shadow once the bands are in.
         if landed > 0 {
             var sh = ctx
@@ -110,14 +112,16 @@ struct SplashView: View {
             w.fill(wave, with: .color(.white.opacity(0.42)))
             if flash > 0 { b.fill(Path(rect), with: .color(.white.opacity(0.55 * flash))) }
         }
-        // "EKI" pops in over the bands.
+        // "EKI" pops in, cut out of the bands.
         let ePop = overshoot((t - 1.25) / 0.4)
         if t > 1.25 {
             var e = ctx
+            e.blendMode = .destinationOut
             e.translateBy(x: bx + bw / 2 + 10 * unit, y: by + bh / 2 + 4 * unit)
             e.scaleBy(x: ePop, y: ePop)
             e.draw(Text("EKI").font(.system(size: 116 * unit, weight: .black).italic()).foregroundColor(.white),
                    at: .zero, anchor: .center)
+        }
         }
 
         // A four-colour line grows, then the subtitle.
