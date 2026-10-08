@@ -243,7 +243,10 @@ enum Exporter {
     private static func wsola(_ input: AVAudioPCMBuffer, frames: Int, source: (Int) -> Double?) throws -> AVAudioPCMBuffer {
         let format = input.format
         let ch = Int(format.channelCount)
-        let n = 1024, hop = n / 2, tol = 96
+        // 93 ms grains: long enough that a bass cycle or a sustained chord is never cut apart, and the
+        // similarity search keeps drum hits whole (measured: 1% of 25 ms blocks off, against 10% with 23 ms).
+        let n = Int(ProcessInfo.processInfo.environment["STEMEKI_WSOLA_N"] ?? "") ?? 4096
+        let hop = n / 2, tol = n / 8
         let inLen = Int(input.frameLength)
         guard let src = input.floatChannelData,
               let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
