@@ -55,7 +55,7 @@ A legtöbb stembontó ott megáll, hogy „itt a négy fájl”. A STEMEKI innen
 | **LOOP** | a loop tartománya, ütemre pontosan | export BPM | velük |
 | **REGIONS** | minden régió a jelölt sávokon, külön fájlonként | export BPM | velük |
 
-- **SEL. MIX**: a jelölt sávok egy fájlba keverve (pl. DRUMS+BASS), a faderek szerint.
+- **EXPORT…**: a négy exportot egymás mellett mutatja, mindegyiknél egy rajzzal arról, mi kerül a fájlba, milyen tempóban, és egy példa fájlnévvel. A LOOP csak bekapcsolt loopnál, a REGIONS csak régiók esetén él.
 - Ha egy sávot kiveszel az exportból, el is némul: azt hallod, amit exportálsz.
 - A fájlok az eredeti formátumban készülnek (WAV / AIFF / FLAC, bitmélység, mintavétel). A WAV loopokban **ACID** és **smpl** adat van (tempó, ütésszám, alaphang, loop-pontok), és egy „Made with STEMEKI” megjegyzés.
 - Minden exportnál kiválasztod a mappát. Fájlnév: `Cim_DRUMS_127bpm_REGION_17_20.wav`.

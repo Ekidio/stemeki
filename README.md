@@ -55,7 +55,7 @@ Most stem splitters stop at "here are four files". STEMEKI goes on:
 | **LOOP** | the loop range, bar-exact | export BPM | yes |
 | **REGIONS** | every region on the marked lanes, one file each | export BPM | yes |
 
-- **SEL. MIX** puts the marked lanes into one file (for example DRUMS+BASS), following the faders.
+- **EXPORT…** opens all four exports side by side, each with a picture of what goes into the file, what tempo it gets and an example file name. LOOP works only with the loop on, REGIONS only when there are regions.
 - Marking a lane off for export also mutes it: you hear what you export.
 - Files keep the original format (WAV / AIFF / FLAC, bit depth, sample rate). WAV loops carry **ACID** and **smpl** data (tempo, beats, root, loop points) and a "Made with STEMEKI" note.
 - Every export asks for a folder. Names: `Title_DRUMS_127bpm_REGION_17_20.wav`.
