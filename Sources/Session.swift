@@ -107,7 +107,8 @@ final class Session: ObservableObject {
         exportMix = d.bool(forKey: "exportMix")
         exportSeparate = d.object(forKey: "exportSeparate") as? Bool ?? true
         fadeMs = d.object(forKey: "fadeMs") as? Double ?? 3
-        selectedMix = d.bool(forKey: "selectedMix")
+        // SELECTED MIX has no button any more: every lane always exports to its own file.
+        selectedMix = false
         nudgeStep = d.object(forKey: "nudgeStep") as? Double ?? 0.5
         // Fade is off on every launch, on purpose.
         fadeOn = false

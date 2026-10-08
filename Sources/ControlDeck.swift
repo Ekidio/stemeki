@@ -234,17 +234,20 @@ struct StemsCard: View {
 struct ExportCard: View {
     @EnvironmentObject var session: Session
     @EnvironmentObject var library: Library
+    @State private var showSheet = false
 
     var body: some View {
         let song = library.selected
-        let lanes = session.exportLanes.map(\.fileTag).joined(separator: session.selectedMix ? "+" : ", ")
         Card(title: "EXPORT", accent: Theme.bass) {
             HStack(spacing: 3) {
                 kindButton(.full, "FULL", "doc.on.doc", "Every marked lane as it is: the whole file, original tempo, no edits.")
                 kindButton(.cue, "FROM CUE", "flag.fill", "Every marked lane from the CUE (bar 1) to the end, on the export tempo — stack them in a DAW from bar 1.")
-                Button("SEL. MIX") { session.selectedMix.toggle() }
-                    .buttonStyle(PillButtonStyle(color: Theme.bass, active: session.selectedMix, small: true))
-                    .help("SELECTED MIX: FULL, FROM CUE and LOOP put the marked lanes into one file (\(lanes.isEmpty ? "none marked" : lanes)), following the faders.")
+                Button { showSheet = true } label: {
+                    HStack(spacing: 4) { Image(systemName: "list.bullet.rectangle.portrait").font(.system(size: 9.5, weight: .bold)); Text("EXPORT…") }
+                }
+                .buttonStyle(PillButtonStyle(color: Theme.bass, small: true))
+                .disabled(library.selected?.isReady != true)
+                .help("All the ways to export, explained, with a picture of each")
             }
             HStack(spacing: 3) {
                 kindButton(.loop, session.loop.map { l in l.isBars ? "LOOP \(l.startBar)–\(l.endBar - 1)" : "LOOP " + (session.grid?.rangeLabel(l.start, l.end) ?? "") } ?? "LOOP", "repeat",
@@ -266,6 +269,7 @@ struct ExportCard: View {
             if session.exporting { ProgressView().controlSize(.mini).padding(10) }
         }
         .overlay(alignment: .top) { ExportBurst().padding(.top, 6) }
+        .sheet(isPresented: $showSheet) { ExportSheet().environmentObject(session).environmentObject(library) }
     }
 
     private func kindButton(_ kind: Session.ExportKind, _ label: String, _ icon: String, _ help: String) -> some View {
