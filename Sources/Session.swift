@@ -1070,7 +1070,7 @@ final class Session: ObservableObject {
         guard !exporting, grid != nil, !exportLanes.isEmpty else { return false }
         switch kind {
         case .full, .cue: return true
-        case .loop: return loop != nil
+        case .loop: return loop != nil && loopEnabled
         case .regions: return !regionsToExport.isEmpty
         }
     }

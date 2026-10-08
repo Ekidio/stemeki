@@ -63,7 +63,8 @@ struct ExportSheet: View {
                        ?? "The loop range, bar-exact, ready to repeat in any DAW.",
                    facts: [("Tempo", "\(bpm) BPM"), ("Edits", "included"), ("Loop points", "written (ACID)")],
                    example: "\(title)_\(tag)_\(bpm)bpm_LOOP_\(loopName).wav",
-                   blocked: noLanes ?? (session.loop == nil ? "Draw a loop in the ruler first (drag in its lower strip, or U)." : nil)),
+                   blocked: noLanes ?? (session.loop == nil ? "Draw a loop in the ruler first (drag in its lower strip, or U)."
+                                        : !session.loopEnabled ? "The loop is off: switch LOOP on (L) to export it." : nil)),
             Option(kind: .regions, number: 4, title: regions == 1 ? "REGION" : "REGIONS",
                    text: "Every region drawn in EXPORT mode, each in its own file: a verse of the drums, a chorus of the bass…",
                    facts: [("Tempo", "\(bpm) BPM"), ("Edits", "included"), ("Files", regions == 0 ? "one per region" : "\(regions) (one per region)")],
