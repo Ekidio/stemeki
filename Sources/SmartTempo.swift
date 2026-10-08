@@ -6,6 +6,12 @@ import Foundation
 /// tempo becomes one perfectly straight line (a round BPM when the hits allow it). Where the tempo really moves,
 /// every beat keeps its own marker.
 enum SmartTempo {
+    // Tuning (STEMEKI_ST_* override them for measurements).
+    private static func env(_ k: String, _ d: Double) -> Double { Double(ProcessInfo.processInfo.environment["STEMEKI_ST_" + k] ?? "") ?? d }
+    static var biasFix: Bool { env("BIAS", 1) != 0 }
+    static var refineWindow: Double { env("WIN", 0.035) }
+    static var smoothHalf: Int { Int(env("HALF", 4)) }
+
     /// Warp markers numbered from the first downbeat (beat 0 = bar 1).
     static func map(beats raw: [Double], downbeats: [Double], hits: [StemKind: Onsets.Hits]) -> [BeatPoint]? {
         guard raw.count >= 16 else { return nil }
@@ -16,6 +22,7 @@ enum SmartTempo {
             return beats.indices.min { abs(raw[$0] - d) < abs(raw[$1] - d) } ?? 0
         }()
         let pts = beats.enumerated().map { (b: Double($0.offset - zero), t: $0.element) }
+        if env("STRAIGHT", 1) == 0 { return pts.map { BeatPoint(beat: $0.b, time: $0.t) } }
         return straighten(pts).map { BeatPoint(beat: $0.b, time: $0.t) }
     }
 
@@ -44,9 +51,19 @@ enum SmartTempo {
         }
         let drums = hits[.drums], dMain = mainLevel(drums)
         let others: [(Onsets.Hits, Float)] = [StemKind.bass, .other, .vocals].compactMap { k in hits[k].map { ($0, mainLevel($0)) } }
-        return beats.map { t in
-            if let d = strongest(drums, near: t, window: 0.035, floor: dMain * 0.15) { return d }
-            for (h, m) in others { if let o = strongest(h, near: t, window: 0.03, floor: m * 0.25) { return o } }
+        // The model's beats can sit a steady few tens of ms off the attacks (its 20 ms frames, the mix it hears):
+        // measure that offset over the whole song first, so the search below is centred on the real hits.
+        var shift = 0.0
+        if biasFix, let d = drums, d.times.count > 16 {
+            var offs: [Double] = []
+            for t in beats { if let h = strongest(d, near: t, window: 0.07, floor: dMain * 0.3) { offs.append(h - t) } }
+            if offs.count >= 16 { offs.sort(); shift = offs[offs.count / 2] }
+        }
+        let w = refineWindow
+        return beats.map { t0 in
+            let t = t0 + shift
+            if let d = strongest(drums, near: t, window: w, floor: dMain * 0.15) { return d }
+            for (h, m) in others { if let o = strongest(h, near: t, window: w * 0.85, floor: m * 0.25) { return o } }
             return t
         }
     }
@@ -134,8 +151,9 @@ enum SmartTempo {
             // A beat outside the straight runs follows the tempo of its neighbours: a line through the 9 beats
             // around it (a single attack's jitter evens out, a tempo that moves is followed).
             guard s >= 0 else {
-                let lo = max(0, e - 4), hi = min(pts.count, e + 5)
-                if hi - lo >= 5 {
+                let half = smoothHalf
+                let lo = max(0, e - half), hi = min(pts.count, e + half + 1)
+                if half > 0, hi - lo >= 5 {
                     let l = fitOnce(pts[lo..<hi]).line
                     out.append((pts[e].b, l.a + l.p * pts[e].b))
                 } else {
