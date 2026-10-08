@@ -8,3 +8,13 @@ demo/
 .vendor/
 .venv/
 .dmg/
+
+# Audio never goes into the repo (songs are copyrighted)
+*.mp3
+*.wav
+*.m4a
+*.aif
+*.aiff
+*.flac
+*.ogg
+*.stemeki
