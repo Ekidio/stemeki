@@ -6,6 +6,8 @@
 <title>STEMEKI – stems · loops · remix</title>
 <meta name="description" content="Split any song into stems, rebuild its structure, export DAW-ready loops. A native macOS app by EKIDIO SOUND.">
 <link rel="icon" href="assets/icon.png">
+<link rel="alternate" hreflang="en" href="https://ekidio.github.io/stemeki/">
+<link rel="alternate" hreflang="hu" href="https://ekidio.github.io/stemeki/hu/">
 <meta property="og:title" content="STEMEKI – stems · loops · remix">
 <meta property="og:description" content="Split any song into stems, rebuild its structure, export DAW-ready loops.">
 <meta property="og:image" content="assets/stemeki-editor.png">
@@ -57,6 +59,9 @@
   table{width:100%;border-collapse:collapse;font-size:14.5px}
   td{padding:9px 10px;border-bottom:1px solid var(--line);color:#c9ccd8} td:first-child{white-space:nowrap;width:1%;padding-right:22px}
   pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font:13px ui-monospace,Menlo,monospace;color:#e6e7ee}
+  .lang{position:absolute;top:18px;right:20px;z-index:2;display:flex;gap:2px;padding:3px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;font:800 12px ui-monospace,Menlo,monospace;letter-spacing:.08em}
+  .lang a,.lang span{padding:5px 9px;border-radius:6px;color:var(--dim)} .lang a:hover{text-decoration:none;color:#fff}
+  .lang span{background:var(--accent);color:#06161c}
   footer{padding:40px 0 60px;color:var(--dim);font-size:13px;text-align:center;border-top:1px solid var(--line)}
   footer b{color:#fff;letter-spacing:.18em}
   @media (max-width:760px){
@@ -69,6 +74,7 @@
 </head>
 <body>
 <header class="hero">
+  <nav class="lang" aria-label="Language"><span>EN</span><a href="hu/" hreflang="hu" lang="hu">HU</a></nav>
   <div class="wrap">
     <div class="logo">STEM<span class="eki"><i>EKI</i></span></div>
     <div class="bands"><span style="background:var(--vocals)"></span><span style="background:var(--drums)"></span><span style="background:var(--bass)"></span><span style="background:var(--other)"></span></div>

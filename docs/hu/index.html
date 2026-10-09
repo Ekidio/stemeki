@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STEMEKI – stems · loops · remix</title>
+<meta name="description" content="Bonts sávokra bármilyen dalt, építsd át a szerkezetét, és ments DAW-kész loopokat. Natív macOS app az EKIDIO SOUND-tól.">
+<link rel="icon" href="../assets/icon.png">
+<link rel="alternate" hreflang="en" href="https://ekidio.github.io/stemeki/">
+<link rel="alternate" hreflang="hu" href="https://ekidio.github.io/stemeki/hu/">
+<meta property="og:title" content="STEMEKI – stems · loops · remix">
+<meta property="og:description" content="Bonts sávokra bármilyen dalt, építsd át a szerkezetét, és ments DAW-kész loopokat.">
+<meta property="og:image" content="../assets/stemeki-editor.png">
+<style>
+  :root{
+    --bg:#0b0b0d; --panel:#16171c; --panel2:#1e2027; --line:rgba(255,255,255,.08);
+    --text:#dcdee8; --dim:#8a8d9c; --accent:#45d9fa;
+    --vocals:#ff5c8a; --drums:#ffa821; --bass:#3ddc97; --other:#5ca8ff; --loop:#ffd60a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+  header.hero{position:relative;overflow:hidden;padding:72px 0 40px;text-align:center;
+    background:radial-gradient(60% 50% at 50% 30%,rgba(92,168,255,.18),transparent 70%),radial-gradient(rgba(255,255,255,.035) 1px,transparent 1.4px) 0 0/6px 6px}
+  .logo{display:inline-flex;align-items:center;gap:.12em;font:900 italic clamp(52px,11vw,104px)/1 -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:-.02em;color:#fff}
+  .eki{position:relative;display:inline-block;transform:skewX(-14deg);padding:.04em .18em .02em;margin-left:.08em;box-shadow:.07em .07em 0 #fff;
+    background:linear-gradient(var(--vocals) 0 25%,var(--drums) 25% 50%,var(--bass) 50% 75%,var(--other) 75%)}
+  .eki i{display:inline-block;transform:skewX(14deg);font-style:italic;color:var(--bg)}
+  .bands{display:flex;justify-content:center;gap:6px;margin:22px auto 14px;width:min(520px,80%)}
+  .bands span{flex:1;height:4px;border-radius:2px}
+  .sub{font:700 13px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.42em;color:#c9cbd6;margin-bottom:26px}
+  .tag{font-size:clamp(18px,2.6vw,23px);max-width:760px;margin:0 auto 30px;color:#e9eaf1}
+  .tag b{color:#fff}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:10px;padding:13px 22px;border-radius:12px;font-weight:800;letter-spacing:.02em;border:1px solid var(--line)}
+  .btn.primary{background:var(--bass);color:#071a10;box-shadow:0 8px 30px rgba(61,220,151,.25)} .btn.primary:hover{text-decoration:none;filter:brightness(1.08)}
+  .btn.ghost{background:var(--panel2);color:var(--text)} .btn.ghost:hover{text-decoration:none;background:#262833}
+  .req{margin-top:12px;font-size:13px;color:var(--dim)}
+  .shot{margin:46px auto 0;border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.6)}
+  .shot img{display:block;width:100%;height:auto}
+  section{padding:64px 0}
+  h2{font:900 italic clamp(28px,4vw,38px)/1.1 -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;margin:0 0 10px;letter-spacing:-.01em}
+  .lead{color:var(--dim);max-width:720px;margin:0 0 30px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 20px 18px;position:relative;overflow:hidden}
+  .card::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--c)}
+  .card h3{margin:4px 0 8px;color:#fff;font-size:18px}
+  .card p{margin:0;color:#c3c6d3;font-size:14.5px}
+  .k{display:inline-block;font:700 12px ui-monospace,Menlo,monospace;background:#fff;color:#000;border-radius:5px;padding:1px 7px;margin:0 2px}
+  .pyramid{display:grid;gap:10px}
+  .tier{display:grid;grid-template-columns:150px 1fr auto;gap:16px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px}
+  .tier .name{font:800 13px ui-monospace,Menlo,monospace;letter-spacing:.08em;padding:7px 10px;border-radius:8px;text-align:center;color:#071a10;background:var(--bass)}
+  .tier p{margin:0;color:#c9ccd8;font-size:14.5px}
+  .tier .meta{font:600 12px ui-monospace,Menlo,monospace;color:var(--dim);white-space:nowrap}
+  .tier.unique{border-color:rgba(61,220,151,.45);box-shadow:0 0 0 1px rgba(61,220,151,.15),0 10px 40px rgba(61,220,151,.08)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .two img{width:100%;border-radius:12px;border:1px solid var(--line)}
+  table{width:100%;border-collapse:collapse;font-size:14.5px}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);color:#c9ccd8} td:first-child{white-space:nowrap;width:1%;padding-right:22px}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font:13px ui-monospace,Menlo,monospace;color:#e6e7ee}
+  .lang{position:absolute;top:18px;right:20px;z-index:2;display:flex;gap:2px;padding:3px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;font:800 12px ui-monospace,Menlo,monospace;letter-spacing:.08em}
+  .lang a,.lang span{padding:5px 9px;border-radius:6px;color:var(--dim)} .lang a:hover{text-decoration:none;color:#fff}
+  .lang span{background:var(--accent);color:#06161c}
+  footer{padding:40px 0 60px;color:var(--dim);font-size:13px;text-align:center;border-top:1px solid var(--line)}
+  footer b{color:#fff;letter-spacing:.18em}
+  @media (max-width:760px){
+    .tier{grid-template-columns:1fr} .tier .meta{white-space:normal}
+    .two{grid-template-columns:1fr}
+    header.hero{padding-top:48px}
+    .sub{letter-spacing:.2em;font-size:11px}
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <nav class="lang" aria-label="Nyelv"><a href="../" hreflang="en" lang="en">EN</a><span>HU</span></nav>
+  <div class="wrap">
+    <div class="logo">STEM<span class="eki"><i>EKI</i></span></div>
+    <div class="bands"><span style="background:var(--vocals)"></span><span style="background:var(--drums)"></span><span style="background:var(--bass)"></span><span style="background:var(--other)"></span></div>
+    <div class="sub">STEMS · LOOPS · REMIX</div>
+    <p class="tag"><b>Bonts sávokra bármilyen dalt, építsd át a szerkezetét, és ments DAW-kész loopokat.</b> Ütemre pontosan, egész BPM-en, minden ütés hallható kezdetén.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/Ekidio/stemeki/releases/latest">⬇ Letöltés Macre</a>
+      <a class="btn ghost" href="https://github.com/Ekidio/stemeki">GitHub</a>
+    </div>
+    <div class="req">Apple Silicon · macOS 14+ · helyben fut, Demucs 4-gyel az Apple GPU-n</div>
+    <div class="shot"><img src="../assets/stemeki-editor.png" alt="A STEMEKI szerkesztője négy sávval"></div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>Nem csak négy fájl.</h2>
+    <p class="lead">A legtöbb sávbontó ott áll meg, hogy „itt vannak a sávjaid”. A STEMEKI-ben itt kezdődik a munka: megbízható ütemrács, egy CUE, ami tényleg az 1. ütem, és egy mini DAW a dal szerkezetéhez.</p>
+    <div class="grid">
+      <div class="card" style="--c:var(--drums)"><h3>Smart Tempo</h3><p>Egy betanított ütemfelismerő modell végighallgatja a teljes mixet, és megtalál minden ütést és az egyet. Minden ütés a valódi indítására kerül; egy egyenletes dal egyetlen, tökéletesen egyenes rácsot kap kerek BPM-en, egy gyorsuló dalt pedig szakaszról szakaszra követ. A metronóm és minden vágás pontosan az ütéseken ül.</p></div>
+      <div class="card" style="--c:var(--accent)"><h3>CUE = bar 1</h3><p>A CUE a dal első ütemkezdetére kerül, amit egy betanított ütemfelismerő modell talál meg. Máshol hallod az „egyet”? Nyomd meg a <span class="k">C</span>-t a lejátszófejnél, akár lejátszás közben, vagy húzd el a zászlót.</p></div>
+      <div class="card" style="--c:var(--other)"><h3>Építsd át a dalt</h3><p>EDIT: húzással kijelölsz, kattintással vágsz, <span class="k">D</span>-vel duplikálsz, <span class="k">⌘C</span> <span class="k">⌘V</span>-vel bárhová másolsz, darabokat mozgatsz (akár a dal végén túlra is, hosszabb mixhez), a széleiket 1/16-os vonalakon igazítod, és fade-eket teszel rájuk. A darabok felülírják, amit takarnak, mint egy DAW-ban. Mentsd el az egészet projektként (<span class="k">⌘S</span>), és folytasd később.</p></div>
+      <div class="card" style="--c:var(--vocals)"><h3>Mentsd ki a szerkezetet</h3><p>EXPORT: rajzolj régiókat a sávokra – a dob egy versszakát, a basszus egy refrénjét –, és egy kattintással mentsd ki mindegyiket külön loopként.</p></div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <h2>Az export piramis</h2>
+    <p class="lead">Az egyszerűtől az egyediig. Minden fájl megtartja az eredeti minőséget; a WAV loopokban ACID- és looppont-adatok vannak, így a loopokat ismerő DAW-ok tudják, mik ezek.</p>
+    <div class="pyramid">
+      <div class="tier"><div class="name" style="background:#c9ccd8">FULL</div><p>Minden kijelölt sáv úgy, ahogy van – a teljes dal, eredeti tempóban.</p><div class="meta">amit bármelyik sávbontó tud</div></div>
+      <div class="tier"><div class="name" style="background:var(--accent)">FROM CUE</div><p>Minden sáv az 1. ütemtől a végéig, az export tempóján – tedd őket egymás alá a DAW-odban, mind a rácson lesz.</p><div class="meta">DJ-kész sávok</div></div>
+      <div class="tier unique"><div class="name" style="background:var(--loop)">LOOP</div><p>Minden sáv loop-tartománya ütemre pontosan – a refrén, a drop, a break, sávonként.</p><div class="meta">amit csak a DAW-ok tudnak</div></div>
+      <div class="tier unique"><div class="name">REGIONS</div><p>Minden régió, amit rajzoltál, mind külön fájlban, az átépített dalból. Verhetetlen egy loopkönyvtár építéséhez.</p><div class="meta">csak a STEMEKI-ben</div></div>
+    </div>
+    <p class="lead" style="margin-top:18px"><b style="color:#fff">EXPORT…</b> mind a négyet egymás mellett mutatja, mindegyiknél egy rajzzal arról, mi kerül a fájlba, és egy példa fájlnévvel.</p>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap two">
+    <div><h2 style="font-size:26px">Azonnal szól</h2><p class="lead">Húzz be egy dalt: már szól, amíg az AI szétbontja, és a sávok színesen nyílnak ki a lejátszófejet követve.</p><img src="../assets/stemeki-preparing.png" alt="Az előkészítő képernyő a sávbontás animációjával"></div>
+    <div><h2 style="font-size:26px">30 másodperc alatt megtanulod</h2><p class="lead">Első indításkor egy négykártyás bemutató megmutatja a teljes munkafolyamatot. A <b style="color:#fff">?</b> gomb bármikor visszahozza.</p><img src="../assets/stemeki-intro.png" alt="Az első indítás bemutató kártyái"></div>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <h2>Billentyűk</h2>
+    <table>
+      <tr><td><span class="k">Space</span></td><td>lejátszás / szünet</td></tr>
+      <tr><td><span class="k">Enter</span></td><td>vissza az elejére (bekapcsolt FOLLOW-val a nézet követi)</td></tr>
+      <tr><td><span class="k">C</span></td><td>CUE a lejátszófejhez</td></tr>
+      <tr><td><span class="k">E</span></td><td>EDIT / EXPORT</td></tr>
+      <tr><td><span class="k">D</span> <span class="k">⌫</span> <span class="k">Esc</span></td><td>duplikálás · törlés · kijelölés megszüntetése</td></tr>
+      <tr><td><span class="k">U</span></td><td>a kijelölés loopolása (a loop követi)</td></tr>
+      <tr><td><span class="k">⌘C</span> <span class="k">⌘V</span></td><td>másolás · beillesztés a kattintott helyre</td></tr>
+      <tr><td><span class="k">⌘S</span> <span class="k">⇧⌘O</span></td><td>projekt mentése · projekt megnyitása</td></tr>
+      <tr><td><span class="k">L</span> <span class="k">K</span></td><td>loop · metronóm</td></tr>
+      <tr><td><span class="k">[</span> <span class="k">]</span></td><td>NUDGE: a zene korábbra / későbbre tolása</td></tr>
+      <tr><td><span class="k">⌘Z</span> <span class="k">⌘E</span> <span class="k">⇧⌘E</span></td><td>visszavonás · LOOP export · REGIONS export</td></tr>
+    </table>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <h2>Telepítés</h2>
+    <p class="lead">1. Töltsd le a DMG-t, és húzd a STEMEKI-t az Alkalmazások mappába. 2. Első alkalommal a macOS letilthatja: kattints a <b style="color:#fff">Kész</b> gombra, majd Rendszerbeállítások → Adatvédelem és biztonság → <b style="color:#fff">Megnyitás mindenképp</b>. 3. A frissítések maguktól érkeznek.</p>
+    <p class="lead">A STEMEKI a Demucs 4-gyel bont a Macen. Első indításkor egy kattintás az <b style="color:#fff">INSTALL ENGINE</b> gombra feltelepíti a saját AI-motorját (kb. 300 MB letöltés): se Terminal, se Python nem kell. Van már Pythonod <code>demucs librosa soundfile</code> csomagokkal? A STEMEKI azt is használja.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap"><b>EKIDIO SOUND</b><br>STEMEKI · <a href="https://github.com/Ekidio/padeki">PADEKI</a> · <a href="https://github.com/Ekidio/daweki_v3">DAWEKI V3</a><br><br>Sávbontás: <a href="https://github.com/facebookresearch/demucs">Demucs</a> (MIT), ütemek: <a href="https://github.com/CPJKU/beat_this">Beat This!</a> (JKU Linz, MIT).</div>
+</footer>
+</body>
+</html>
