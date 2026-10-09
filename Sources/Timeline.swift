@@ -223,7 +223,7 @@ struct TimelineCanvas: View {
             for r in regions {
                 guard let li = lanes.firstIndex(where: { $0.id == r.laneId }) else { continue }
                 let lane = lanes[li]
-                let x0 = x(g.tickTime(r.start) + r.offset, w), x1 = x(g.tickTime(r.end) + r.offset, w)
+                let x0 = x(g.tickTime(r.start), w), x1 = x(g.tickTime(r.end), w)
                 guard x1 >= 0, x0 <= w else { continue }
                 let top = rulerHeight + CGFloat(li) * laneH
                 let rect = CGRect(x: x0, y: top + 3, width: x1 - x0, height: laneH - 6)
@@ -240,8 +240,7 @@ struct TimelineCanvas: View {
                 }
                 let tag = CGRect(x: max(x0, 0) + 4, y: top + 7, width: 0, height: 0)
                 if x1 - x0 > 34 {
-                    let slid = r.offset == 0 ? "" : String(format: " · %+.2f ms", r.offset * 1000)
-                    ctx.draw(Text((editMarks ? "✂ " : "⬇ ") + g.rangeLabel(r.start, r.end) + slid).font(Theme.mono(9.5, .bold))
+                    ctx.draw(Text((editMarks ? "✂ " : "⬇ ") + g.rangeLabel(r.start, r.end)).font(Theme.mono(9.5, .bold))
                                 .foregroundColor(editMarks ? Theme.accent : (sel ? .white : lane.color)),
                              at: CGPoint(x: tag.minX, y: tag.minY + 5), anchor: .leading)
                 }
@@ -429,17 +428,8 @@ final class TimelineNSView: NSView {
         switch e.keyCode {
         case 49: c.session.player.toggle()
         case 37: c.session.loopEnabled.toggle()
-        case 123, 124:
-            let dir = e.keyCode == 123 ? -1 : 1
-            if !c.session.slidableRegions.isEmpty {
-                // Selected export regions slide off the grid: a sample, ⌥ 1 ms, ⇧ 10 ms.
-                let sr = c.session.song?.srcSampleRate ?? 44100
-                let step = e.modifierFlags.contains(.shift) ? Int((sr / 100).rounded())
-                    : e.modifierFlags.contains(.option) ? Int((sr / 1000).rounded()) : 1
-                c.session.slideSelectedRegions(samples: dir * step)
-            } else {
-                c.session.shiftLoop(dir)
-            }
+        case 123: c.session.shiftLoop(-1)
+        case 124: c.session.shiftLoop(1)
         case 51, 117: c.deleteSelection()
         case 53: c.session.clearSelection()
         case 32:   // U: the loop takes the selection's start and end

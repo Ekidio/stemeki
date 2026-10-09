@@ -496,39 +496,6 @@ final class Session: ObservableObject {
     }
 
     /// Moves regions from their `base` state by whole ticks and lanes (lane index within the lanes on screen).
-    /// EXPORT: the selected regions that slide sample by sample (← →).
-    var slidableRegions: [Region] { workMode == .export ? allRegions.filter { selected.contains($0.id) } : [] }
-
-    private var lastSlide = Date.distantPast
-
-    /// Slides the selected export regions by whole samples (of the original file) off the grid: the file is
-    /// cut that much later / earlier. A run of presses is one undo step.
-    func slideSelectedRegions(samples: Int) {
-        guard let song, !slidableRegions.isEmpty else { return }
-        if Date().timeIntervalSince(lastSlide) > 1.5 { checkpoint() }
-        lastSlide = Date()
-        let sr = song.srcSampleRate > 0 ? song.srcSampleRate : 44100
-        storeRegions(allRegions.map { r in
-            guard selected.contains(r.id) else { return r }
-            var r = r
-            r.offset = (r.offset * sr + Double(samples)).rounded() / sr
-            return r
-        })
-    }
-
-    func resetRegionOffsets() {
-        guard slidableRegions.contains(where: { $0.offset != 0 }) else { return }
-        checkpoint()
-        storeRegions(allRegions.map { r in var r = r; if selected.contains(r.id) { r.offset = 0 }; return r })
-    }
-
-    /// The offset of the selected regions, in samples of the original file (nil: none or several different).
-    var slideSamples: Int? {
-        guard let song else { return nil }
-        let set = Set(slidableRegions.map { Int(($0.offset * song.srcSampleRate).rounded()) })
-        return set.count == 1 ? set.first : nil
-    }
-
     func moveRegions(_ base: [Region], ticks: Int, lanes laneDelta: Int) {
         let ls = lanes
         var list = activeRegionList
@@ -1152,11 +1119,8 @@ final class Session: ObservableObject {
         }
 
         func job(_ outs: [ExportJob.Output], beatStart: Double, beats: Double, stretch: Bool, acid: ExportJob.Acid?,
-                 folder: URL, offset: Double = 0) -> ExportJob {
-            // A region slid off the grid: the same grid, that much later in the audio.
-            let g = offset == 0 ? g : Grid(points: g.points.map { BeatPoint(beat: $0.beat, time: $0.time + offset) },
-                                           bpm: g.bpm, duration: g.duration)
-            return ExportJob(stemsDir: library.stemsDir(song), outDir: folder, baseName: title, rangeName: "",
+                 folder: URL) -> ExportJob {
+            ExportJob(stemsDir: library.stemsDir(song), outDir: folder, baseName: title, rangeName: "",
                       start: g.time(beatStart), end: g.time(beatStart + beats), outputs: outs,
                       fadeMs: fadeOn ? fadeMs : nil, grid: g, beatStart: beatStart, beats: beats,
                       targetBpm: stretch ? target : g.meanBPM, stretch: stretch, acid: acid,
@@ -1212,7 +1176,7 @@ final class Session: ObservableObject {
                 let beats = Double(r.len) / Double(ticksPerBeat)
                 jobs.append(job([out], beatStart: g.firstBarBeat + Double(r.start) / Double(ticksPerBeat), beats: beats, stretch: true,
                                 acid: .init(tempo: target, beats: max(1, Int(beats.rounded())), rootNote: rootNote, loop: true),
-                                folder: folder, offset: r.offset))
+                                folder: folder))
             }
             summary = "region\(jobs.count == 1 ? "" : "s")"
         }
