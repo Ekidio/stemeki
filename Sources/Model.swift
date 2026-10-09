@@ -275,6 +275,8 @@ struct Region: Codable, Identifiable, Equatable {
     var laneId: String
     var start: Int      // ticks
     var len: Int        // ticks
+    /// EXPORT: the region slid off the grid by this much (seconds, whole samples), for a sample-exact cut.
+    var offset: Double = 0
 
     var end: Int { start + len } // exclusive
 
@@ -282,11 +284,12 @@ struct Region: Codable, Identifiable, Equatable {
         self.id = id; self.laneId = laneId; self.start = start; self.len = len
     }
 
-    private enum K: String, CodingKey { case id, laneId, startT, lenT, start, len, startBar, bars }
+    private enum K: String, CodingKey { case id, laneId, startT, lenT, start, len, startBar, bars, offset }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         id = try c.decode(UUID.self, forKey: .id)
         laneId = try c.decode(String.self, forKey: .laneId)
+        offset = try c.decodeIfPresent(Double.self, forKey: .offset) ?? 0
         if let s = try c.decodeIfPresent(Int.self, forKey: .startT) {
             start = s; len = try c.decode(Int.self, forKey: .lenT)
         } else if let s = try c.decodeIfPresent(Int.self, forKey: .start) {  // saved in beats by an earlier version
@@ -300,6 +303,7 @@ struct Region: Codable, Identifiable, Equatable {
         var c = e.container(keyedBy: K.self)
         try c.encode(id, forKey: .id); try c.encode(laneId, forKey: .laneId)
         try c.encode(start, forKey: .startT); try c.encode(len, forKey: .lenT)
+        if offset != 0 { try c.encode(offset, forKey: .offset) }
     }
 }
 
