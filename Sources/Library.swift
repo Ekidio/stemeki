@@ -203,9 +203,14 @@ final class Library: ObservableObject {
         processNext()
     }
 
-    /// Re-run only the beat/key analysis.
+    /// Re-run only the beat/key analysis. The grid and the CUE start over as after the first analysis
+    /// (a moved CUE and a nudge go back); the edits stay on the same music.
     func reanalyze(_ id: UUID) {
-        update(id) { $0.state = .queued; $0.error = nil; $0.bpm = nil }
+        update(id) {
+            $0.recueFrom = $0.grid?.time(0)
+            $0.beatMap = nil; $0.contentShift = nil; $0.autoWarped = nil; $0.autoCued = nil
+            $0.state = .queued; $0.error = nil; $0.bpm = nil
+        }
         processNext()
     }
 

@@ -846,6 +846,11 @@ final class Session: ObservableObject {
             autoCue(undoable: false)
             if let id = song?.id { library.update(id) { $0.autoCued = true } }
         }
+        // Re-analyzed: the edits were counted from the old bar 1; keep them on the same music.
+        if let t0 = song?.recueFrom, let g = grid, let id = song?.id {
+            library.update(id) { $0.recueFrom = nil }
+            shiftEdits(by: Int((g.beat(at: t0) * Double(ticksPerBeat)).rounded()))
+        }
     }
 
     // MARK: CUE (bar 1)
@@ -908,16 +913,21 @@ final class Session: ObservableObject {
         if undoable { checkpoint() }
         setMap(g.points.map { BeatPoint(beat: $0.beat - k, time: $0.time) })
         // Edits move with the music (to the nearest sixteenth when the 1 moved between the lines).
-        let kt = k * Double(ticksPerBeat), ki = Int(kt.rounded())
-        if ki != 0 {
-            if !allRegions.isEmpty { storeRegions(allRegions.map { var r = $0; r.start -= ki; return r }) }
-            marks = marks.map { var r = $0; r.start -= ki; return r }
-            if !allClips.isEmpty { storeClips(allClips.map { var c = $0; c.start -= ki; c.src -= ki; return c }) }
-            if let p = pasteAt { pasteAt = p - ki }
+        shiftEdits(by: -Int((k * Double(ticksPerBeat)).rounded()))
+    }
+
+    /// Moves regions, cuts, marks and the loop by `d` ticks in the numbering (they stay on the same music
+    /// when the 1 moves the other way).
+    private func shiftEdits(by d: Int) {
+        if d != 0 {
+            if !allRegions.isEmpty { storeRegions(allRegions.map { var r = $0; r.start += d; return r }) }
+            marks = marks.map { var r = $0; r.start += d; return r }
+            if !allClips.isEmpty { storeClips(allClips.map { var c = $0; c.start += d; c.src += d; return c }) }
+            if let p = pasteAt { pasteAt = p + d }
         }
         if var l = loop {
             // The loop stays on the same music.
-            l.start -= ki
+            l.start += d
             followingLoop = !loopFollows.isEmpty
             loop = l
             followingLoop = false

@@ -97,6 +97,8 @@ struct Song: Codable, Identifiable, Equatable {
     var autoCued: Bool?
     /// AUTO WARP has run once for this song.
     var autoWarped: Bool?
+    /// Re-analyzed: where bar 1 was before (seconds), so the edits can follow the new CUE.
+    var recueFrom: Double?
 
     /// Every beat and downbeat of the whole song from the beat model (seconds); the grid is built from them.
     var modelBeats: [Double]?
