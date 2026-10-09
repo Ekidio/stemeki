@@ -23,7 +23,33 @@ enum SmartTempo {
         }()
         let pts = beats.enumerated().map { (b: Double($0.offset - zero), t: $0.element) }
         if env("STRAIGHT", 1) == 0 { return pts.map { BeatPoint(beat: $0.b, time: $0.t) } }
-        return straighten(pts).map { BeatPoint(beat: $0.b, time: $0.t) }
+        var out = straighten(pts)
+        // The 1 is where it is heard: a strong drum hit on it keeps its own time even when the straight line
+        // passes a little off it (a played, not programmed, first hit). Only the beat before and after bend.
+        if zero < beats.count, let d = hits[.drums], d.times.count > 16 {
+            let main = d.weights.sorted()[Int(Double(d.weights.count - 1) * 0.9)]
+            let t1 = beats[zero]
+            let strong = zip(d.times, d.weights).contains { abs($0.0 - t1) < 0.0005 && $0.1 >= main * 0.5 }
+            let onLine = interpolate(out, 0)
+            if strong, abs(t1 - onLine) > 0.003 {
+                for b in [-1.0, 1.0] where pts.contains(where: { $0.b == b }) && !out.contains(where: { $0.b == b }) {
+                    out.append((b, interpolate(out, b)))
+                }
+                out.removeAll { $0.b == 0 }
+                out.append((0, t1))
+                out.sort { $0.b < $1.b }
+            }
+        }
+        return out.map { BeatPoint(beat: $0.b, time: $0.t) }
+    }
+
+    /// Time of beat `b` on the markers (straight between them, the end segments carried on).
+    private static func interpolate(_ m: [(b: Double, t: Double)], _ b: Double) -> Double {
+        guard m.count >= 2 else { return m.first?.t ?? 0 }
+        var i = 0
+        while i < m.count - 2 && m[i + 1].b < b { i += 1 }
+        let (p, q) = (m[i], m[i + 1])
+        return p.t + (b - p.b) * (q.t - p.t) / (q.b - p.b)
     }
 
     /// Each model beat to the attack it stands for: the strongest drum hit within ±35 ms, or a hit of another
