@@ -122,7 +122,7 @@ enum Onsets {
                 ring[idx] = sq
                 idx = (idx + 1) % win
                 n += 1
-                if n % hop == 0 { energy.append(log10(max(ringSum / Float(win), 1e-10))) }
+                if n % hop == 0 { energy.append(log10(max(ringSum / Float(min(n, win)), 1e-10))) }
             }
         }
         guard energy.count > 80, let top = energy.max() else { return Hits() }
