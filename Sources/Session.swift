@@ -452,6 +452,22 @@ final class Session: ObservableObject {
         if list != allClips { storeClips(list) }
     }
 
+    /// ⌘-drag: the pieces follow the mouse freely, to the sample. Each frame lands on the nearest sixteenth and
+    /// the rest goes into the audio's slide inside it, so the sound is exactly `seconds` away from where it was.
+    func moveClipsFree(_ base: [Clip], seconds dt: Double) {
+        guard let g = grid else { return }
+        let sr = player.stemRate
+        var list = allClips
+        for c in base {
+            guard let i = list.firstIndex(where: { $0.id == c.id }) else { continue }
+            let k = Int(g.tick(at: g.tickTime(c.start) + dt).rounded())
+            let s = max(g.fullStartT - ticksPerBar, min(k, maxEndT - c.len))
+            list[i].start = s
+            list[i].slip = ((c.slip + dt - (g.tickTime(s) - g.tickTime(c.start))) * sr).rounded() / sr
+        }
+        if list != allClips { storeClips(list) }
+    }
+
     // MARK: Regions
 
     /// Regions of the lanes on screen (2-stem and 4-stem have different lanes).

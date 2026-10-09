@@ -491,6 +491,7 @@ struct TimelineInteraction: NSViewRepresentable {
             case move(Double, Int, Int, Target)                // loop: t0, original start, bars
             case regions(Double, CGFloat, [Region])            // t0, y0, their state at the start
             case clips(Double, [Clip])                         // t0, their state at the start
+            case clipsFree(Double, [Clip])                     // ⌘: the same, not snapped (to the sample)
             case resizeStart(Int, Target)                      // fixed end (exclusive)
             case resizeEnd(Int, Target)                        // fixed start
             case cue                                           // dragging the CUE flag
@@ -663,7 +664,11 @@ struct TimelineInteraction: NSViewRepresentable {
                     return
                 }
                 let c = session.workMode == .edit ? clip(at: p, size) : nil
-                if let c, session.selected.contains(c.id) {
+                if let c, mods.contains(.command) {
+                    // ⌘: grab the piece and move it freely.
+                    if !session.selected.contains(c.id) { session.selected = [c.id] }
+                    drag = .pendingClip(t, c.id)
+                } else if let c, session.selected.contains(c.id) {
                     if mods.contains(.shift) { session.selected.remove(c.id); drag = .none; return }
                     drag = .pendingClip(t, c.id)
                 } else if let c, mods.contains(.shift) {
@@ -738,7 +743,7 @@ struct TimelineInteraction: NSViewRepresentable {
                     session.checkpoint()
                     base = session.clips.filter { session.selected.contains($0.id) }
                 }
-                drag = .clips(t0, base)
+                drag = downMods.contains(.command) ? .clipsFree(t0, base) : .clips(t0, base)
                 NSCursor.closedHand.set()
             case .create(let t0, let tg):
                 let (s, n) = span(t0, t, unit(tg, size))
@@ -750,6 +755,8 @@ struct TimelineInteraction: NSViewRepresentable {
                 session.moveRegions(base, ticks: delta(t0, unit(nil, size)), lanes: lanes)
             case .clips(let t0, let base):
                 session.moveClips(base, ticks: delta(t0, unit(nil, size)))
+            case .clipsFree(let t0, let base):
+                session.moveClipsFree(base, seconds: t - t0)
             case .cue:
                 session.cueGhost = g.time(cueTarget(t, size))
             case .fade(let c, let isIn):
@@ -800,7 +807,7 @@ struct TimelineInteraction: NSViewRepresentable {
                 if !downMods.contains(.shift) && session.workMode == .edit { session.cutAtRegion(id) }
             case .pendingClip(_, let id):
                 session.selected = [id]
-            case .clips(_, let base):
+            case .clips(_, let base), .clipsFree(_, let base):
                 session.resolveOverlaps(Set(base.map(\.id)))
             case .trimStart(_, let c), .trimEnd(_, let c):
                 session.resolveOverlaps([c.id])
