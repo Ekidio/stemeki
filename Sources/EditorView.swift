@@ -84,7 +84,7 @@ struct HeaderBar: View {
 
     var body: some View {
         let song = library.selected
-        HStack(alignment: .center, spacing: 16) {
+        CenterOrTrailing {
             VStack(alignment: .leading, spacing: 4) {
                 Text(song?.title ?? "").font(.system(size: 19, weight: .bold)).lineLimit(1)
                 HStack(spacing: 8) {
@@ -112,13 +112,36 @@ struct HeaderBar: View {
                     }
                 }
             }
-            Spacer()
+            .fixedSize(horizontal: true, vertical: false)
+            // EDIT / EXPORT sits in the middle of the top bar, or at its right end when the info is too long for that.
+            ModeSwitch()
         }
-        // EDIT / EXPORT sits in the middle of the top bar.
-        .overlay(alignment: .center) { ModeSwitch() }
         .padding(.horizontal, 18)
         .padding(.top, 14)
         .padding(.bottom, 10)
+    }
+}
+
+/// The song info on the left; the second view (EDIT / EXPORT) centred when it does not cover the info,
+/// otherwise at the right end.
+struct CenterOrTrailing: Layout {
+    var gap: CGFloat = 20
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let h = sizes.map(\.height).max() ?? 0
+        return CGSize(width: proposal.width ?? sizes.map(\.width).reduce(0, +) + gap, height: h)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let info = subviews[0].sizeThatFits(.unspecified), sw = subviews[1].sizeThatFits(.unspecified)
+        let room = max(0, bounds.width - sw.width - gap)
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading,
+                          proposal: ProposedViewSize(width: min(info.width, room), height: info.height))
+        let centred = bounds.midX - sw.width / 2
+        let x = info.width + gap <= centred - bounds.minX ? centred : bounds.maxX - sw.width
+        subviews[1].place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(sw))
     }
 }
 
