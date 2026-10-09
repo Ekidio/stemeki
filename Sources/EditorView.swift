@@ -324,6 +324,7 @@ private struct RegionToolbar: View {
             Button("DELETE") { session.deleteSelected() }
                 .buttonStyle(PillButtonStyle(color: Color(red: 1, green: 0.35, blue: 0.3), small: true)).help("⌫ — a deleted piece goes silent")
                 .disabled(session.selected.isEmpty)
+            if !session.slidableClips.isEmpty { SlideControl() }
             Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .buttonStyle(PillButtonStyle(small: true)).help("Undo (⌘Z)")
             Button("ORIGINAL") { session.resetEdits() }
@@ -334,6 +335,34 @@ private struct RegionToolbar: View {
         .padding(5)
         .background(Capsule().fill(Color.black.opacity(0.8)))
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.1)))
+    }
+}
+
+/// EDIT: slide the audio inside the selected pieces off the grid, sample by sample (the pieces stay put).
+private struct SlideControl: View {
+    @EnvironmentObject var session: Session
+    var body: some View {
+        let sr = session.player.stemRate
+        HStack(spacing: 3) {
+            Button { session.slideSelectedClips(samples: -1) } label: { Image(systemName: "chevron.left") }
+                .buttonStyle(PillButtonStyle(small: true)).buttonRepeatBehavior(.enabled)
+                .help("The audio 1 sample earlier (←) · ⌥← 1 ms · ⇧← 10 ms")
+            Group {
+                if let n = session.slideSamples {
+                    Text(n == 0 ? "ON GRID" : String(format: "%+d smp · %+.2f ms", n, Double(n) / sr * 1000))
+                } else {
+                    Text("MIXED")
+                }
+            }
+            .font(Theme.mono(10, .bold)).foregroundColor(session.slideSamples == 0 ? Theme.dim : .white)
+            .frame(minWidth: 120)
+            Button { session.slideSelectedClips(samples: 1) } label: { Image(systemName: "chevron.right") }
+                .buttonStyle(PillButtonStyle(small: true)).buttonRepeatBehavior(.enabled)
+                .help("The audio 1 sample later (→) · ⌥→ 1 ms · ⇧→ 10 ms")
+            Button("0") { session.resetClipSlips() }
+                .buttonStyle(PillButtonStyle(small: true)).help("The audio back on the grid")
+                .disabled(session.slideSamples == 0)
+        }
     }
 }
 

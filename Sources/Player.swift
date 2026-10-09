@@ -242,6 +242,8 @@ final class StemPlayer: ObservableObject {
     private var urls: [StemKind: URL] = [:]
     private var files: [StemKind: AVAudioFile] = [:]
     private var sampleRate: Double = 44100
+    /// The stems' sample rate (a piece slides by these samples).
+    var stemRate: Double { sampleRate }
     private var gains: [StemKind: Float] = [:]
 
     /// Edited lanes: audible runs per stem (nil = the stem plays as it is).
@@ -509,7 +511,7 @@ final class StemPlayer: ObservableObject {
         for sg in segs {
             let tl0 = AVAudioFramePosition((g.tickTime(sg.tl) * sr).rounded())
             let tl1 = AVAudioFramePosition((g.tickTime(sg.tl + sg.len) * sr).rounded())
-            let src0 = AVAudioFramePosition((g.tickTime(sg.src) * sr).rounded())
+            let src0 = AVAudioFramePosition(((g.tickTime(sg.src) - sg.slip) * sr).rounded())
             let a = max(tl0, from), b = min(tl1, to)
             guard b > a else { continue }
             let srcA = src0 + (a - tl0)
@@ -684,7 +686,7 @@ final class StemPlayer: ObservableObject {
                 for sg in edited {
                     let tl0 = g.tickTime(sg.tl), tl1 = g.tickTime(sg.tl + sg.len)
                     guard tl1 > fromT else { continue }
-                    let srcT = g.tickTime(sg.src)
+                    let srcT = g.tickTime(sg.src) - sg.slip
                     let inEnd = sg.fadeIn > 0 ? min(tl1, g.time(g.firstBarBeat + Double(sg.tl) / Double(ticksPerBeat) + sg.fadeIn)) : tl0
                     let outStart = sg.fadeOut > 0
                         ? max(inEnd, g.time(g.firstBarBeat + Double(sg.tl + sg.len) / Double(ticksPerBeat) - sg.fadeOut)) : tl1

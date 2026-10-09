@@ -181,7 +181,7 @@ enum Exporter {
             var lo = Double.infinity, hi = -Double.infinity
             var b = beat0
             while b <= beat0 + outBeats {
-                if let sb = g.sourceBeat(b, part.segs) { let t = g.time(sb); lo = min(lo, t); hi = max(hi, t) }
+                if let t = g.sourceSeconds(b, part.segs) { lo = min(lo, t); hi = max(hi, t) }
                 b += 0.25
             }
             let outFrames = Int((outBeats * 60 / job.targetBpm * stemRate).rounded())
@@ -206,8 +206,8 @@ enum Exporter {
             let segs = part.segs
             let stretched = try wsola(input, frames: outFrames) { o in
                 let ob = beat0 + Double(o) / stemRate * job.targetBpm / 60
-                guard let sb = g.sourceBeat(ob, segs) else { return nil }
-                return (g.time(sb) - inStart) * stemRate
+                guard let t = g.sourceSeconds(ob, segs) else { return nil }
+                return (t - inStart) * stemRate
             }
             // The pieces' fades, on the output's beats.
             if let segs, segs.contains(where: \.hasFades), let d = stretched.floatChannelData {

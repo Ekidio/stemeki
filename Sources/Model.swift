@@ -314,6 +314,8 @@ struct Clip: Codable, Identifiable, Equatable {
     /// Fade-in / fade-out lengths in beats (0 = none).
     var fadeIn: Double = 0
     var fadeOut: Double = 0
+    /// The audio slid inside the piece, off the grid (seconds, whole samples; positive = later).
+    var slip: Double = 0
 
     var end: Int { start + len }
 
@@ -321,7 +323,7 @@ struct Clip: Codable, Identifiable, Equatable {
         self.id = id; self.laneId = laneId; self.start = start; self.src = src; self.len = len
     }
 
-    private enum K: String, CodingKey { case id, laneId, startT, srcT, lenT, fadeIn, fadeOut, start, src, len, startBar, srcBar, bars }
+    private enum K: String, CodingKey { case id, laneId, startT, srcT, lenT, fadeIn, fadeOut, slip, start, src, len, startBar, srcBar, bars }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -337,6 +339,7 @@ struct Clip: Codable, Identifiable, Equatable {
         }
         fadeIn = try c.decodeIfPresent(Double.self, forKey: .fadeIn) ?? 0
         fadeOut = try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 0
+        slip = try c.decodeIfPresent(Double.self, forKey: .slip) ?? 0
     }
     func encode(to e: Encoder) throws {
         var c = e.container(keyedBy: K.self)
@@ -344,6 +347,7 @@ struct Clip: Codable, Identifiable, Equatable {
         try c.encode(start, forKey: .startT); try c.encode(src, forKey: .srcT); try c.encode(len, forKey: .lenT)
         if fadeIn > 0 { try c.encode(fadeIn, forKey: .fadeIn) }
         if fadeOut > 0 { try c.encode(fadeOut, forKey: .fadeOut) }
+        if slip != 0 { try c.encode(slip, forKey: .slip) }
     }
 
     /// Keeps the fades inside the piece (together at most its length).
@@ -362,6 +366,8 @@ struct Seg: Equatable, Sendable {
     /// Fades at the run's start / end, in beats (from the piece it belongs to).
     var fadeIn: Double = 0
     var fadeOut: Double = 0
+    /// The audio slid off the grid (seconds, positive = later): song time = the grid's time − slip.
+    var slip: Double = 0
 
     var hasFades: Bool { fadeIn > 0 || fadeOut > 0 }
 
@@ -417,13 +423,13 @@ extension Array where Element == Clip {
             guard let c = list.last(where: { b >= $0.start && b < $0.end }) else { continue }
             let src = b - c.start + c.src
             // Runs join across pieces only where no fade sits on the seam.
-            if var last = segs.last, last.tl + last.len == b, last.src + last.len == src,
+            if var last = segs.last, last.tl + last.len == b, last.src + last.len == src, last.slip == c.slip,
                owner[owner.count - 1].id == c.id || (owner[owner.count - 1].fadeOut == 0 && c.fadeIn == 0) {
                 last.len += 1
                 segs[segs.count - 1] = last
                 owner[owner.count - 1] = c
             } else {
-                segs.append(Seg(tl: b, src: src, len: 1, fadeIn: b == c.start ? c.fadeIn : 0))
+                segs.append(Seg(tl: b, src: src, len: 1, fadeIn: b == c.start ? c.fadeIn : 0, slip: c.slip))
                 owner.append(c)
             }
         }
@@ -479,8 +485,17 @@ extension Grid {
     /// Song time heard at timeline time t on a lane with these segments (nil = silence).
     func sourceTime(_ t: Double, _ segs: [Seg]?) -> Double? {
         guard let segs else { return t }
-        let b = beat(at: t)
-        return sourceBeat(b, segs).map { time($0) }
+        return sourceSeconds(beat(at: t), segs)
+    }
+
+    /// Song time heard at timeline beat b (the piece's slip included; nil = silence).
+    func sourceSeconds(_ b: Double, _ segs: [Seg]?) -> Double? {
+        guard let segs else { return time(b) }
+        let k = (b - firstBarBeat) * Double(ticksPerBeat)
+        for s in segs where k >= Double(s.tl) && k < Double(s.tl + s.len) {
+            return time(b + Double(s.src - s.tl) / Double(ticksPerBeat)) - s.slip
+        }
+        return nil
     }
 
     /// Gain of the piece fades at timeline beat b (1 on an unedited lane or outside any fade).
@@ -489,16 +504,6 @@ extension Grid {
         let p = b - firstBarBeat, k = p * Double(ticksPerBeat)
         for s in segs where s.hasFades && k >= Double(s.tl) && k < Double(s.tl + s.len) { return s.fadeGain(p) }
         return 1
-    }
-
-    /// Same in beats: the song beat heard at timeline beat b (nil = silence).
-    func sourceBeat(_ b: Double, _ segs: [Seg]?) -> Double? {
-        guard let segs else { return b }
-        let k = (b - firstBarBeat) * Double(ticksPerBeat)
-        for s in segs where k >= Double(s.tl) && k < Double(s.tl + s.len) {
-            return b + Double(s.src - s.tl) / Double(ticksPerBeat)
-        }
-        return nil
     }
 }
 

@@ -496,6 +496,38 @@ final class Session: ObservableObject {
     }
 
     /// Moves regions from their `base` state by whole ticks and lanes (lane index within the lanes on screen).
+    /// EDIT: the selected pieces whose audio slides sample by sample (← →).
+    var slidableClips: [Clip] { workMode == .edit ? allClips.filter { selected.contains($0.id) } : [] }
+
+    private var lastSlide = Date.distantPast
+
+    /// Slides the audio inside the selected pieces by whole samples (of the stems), off the grid; the pieces
+    /// stay where they are. A run of presses is one undo step.
+    func slideSelectedClips(samples: Int) {
+        guard !slidableClips.isEmpty else { return }
+        if Date().timeIntervalSince(lastSlide) > 1.5 { checkpoint() }
+        lastSlide = Date()
+        let sr = player.stemRate
+        storeClips(allClips.map { c in
+            guard selected.contains(c.id) else { return c }
+            var c = c
+            c.slip = (c.slip * sr + Double(samples)).rounded() / sr
+            return c
+        })
+    }
+
+    func resetClipSlips() {
+        guard slidableClips.contains(where: { $0.slip != 0 }) else { return }
+        checkpoint()
+        storeClips(allClips.map { c in var c = c; if selected.contains(c.id) { c.slip = 0 }; return c })
+    }
+
+    /// The slide of the selected pieces in samples (nil: several different).
+    var slideSamples: Int? {
+        let set = Set(slidableClips.map { Int(($0.slip * player.stemRate).rounded()) })
+        return set.count == 1 ? set.first : nil
+    }
+
     func moveRegions(_ base: [Region], ticks: Int, lanes laneDelta: Int) {
         let ls = lanes
         var list = activeRegionList
@@ -606,7 +638,9 @@ final class Session: ObservableObject {
         return segs.compactMap { s in
             let a = max(s.tl, start), b = min(s.tl + s.len, end)
             guard b > a else { return nil }
-            return Clip(laneId: laneId, start: a, src: s.src + (a - s.tl), len: b - a)
+            var c = Clip(laneId: laneId, start: a, src: s.src + (a - s.tl), len: b - a)
+            c.slip = s.slip
+            return c
         }
     }
 

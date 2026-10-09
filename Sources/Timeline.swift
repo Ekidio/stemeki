@@ -428,8 +428,17 @@ final class TimelineNSView: NSView {
         switch e.keyCode {
         case 49: c.session.player.toggle()
         case 37: c.session.loopEnabled.toggle()
-        case 123: c.session.shiftLoop(-1)
-        case 124: c.session.shiftLoop(1)
+        case 123, 124:
+            let dir = e.keyCode == 123 ? -1 : 1
+            if !c.session.slidableClips.isEmpty {
+                // The audio of the selected pieces slides off the grid: a sample, ⌥ 1 ms, ⇧ 10 ms.
+                let sr = c.session.player.stemRate
+                let step = e.modifierFlags.contains(.shift) ? Int((sr / 100).rounded())
+                    : e.modifierFlags.contains(.option) ? Int((sr / 1000).rounded()) : 1
+                c.session.slideSelectedClips(samples: dir * step)
+            } else {
+                c.session.shiftLoop(dir)
+            }
         case 51, 117: c.deleteSelection()
         case 53: c.session.clearSelection()
         case 32:   // U: the loop takes the selection's start and end
