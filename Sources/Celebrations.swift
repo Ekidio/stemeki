@@ -9,7 +9,7 @@ final class Celebrate: ObservableObject {
     /// A song just came out of the separation (its lanes sweep in, its row shimmers).
     @Published private(set) var separated: (id: UUID, n: Int)?
     /// Files just exported: one little card per file, in its stem's colour.
-    @Published private(set) var exported: (colors: [Color], n: Int)?
+    @Published private(set) var exported: (colors: [Color], n: Int, files: Int)?
     /// U: the loop springs from where it was to the selection.
     @Published var loopSpring: LoopSpring?
 
@@ -38,7 +38,7 @@ final class Celebrate: ObservableObject {
             if name.contains("+") { return Theme.text }
             return Lane.all.first { name.contains("_\($0.fileTag)_") }?.color ?? Theme.bass
         }
-        exported = (Array(colors), count)
+        exported = (Array(colors), count, urls.count)
     }
 
     func loop(from: ClosedRange<Double>?, to: ClosedRange<Double>) {
@@ -117,6 +117,154 @@ struct ExportBurst: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { landed = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { if cards.first?.1 == e.n { cards = [] } }
         }
+    }
+}
+
+// MARK: 2b. Export: a show in the middle of the window, from the start to the saved files
+
+/// While an export runs: a glowing ring opens from the middle with the four stem colours pulsing in it.
+/// When the files are saved: they fly out as cards in their colours, a tick draws itself in the ring with the
+/// number of files, and it all fades away. Shown at least about a second, so a quick export is seen too.
+struct ExportShow: View {
+    @EnvironmentObject var session: Session
+    @ObservedObject var celebrate = Celebrate.shared
+
+    private enum Phase { case idle, working, done, failed }
+    @State private var phase: Phase = .idle
+    @State private var startedAt = Date()
+    @State private var open = false          // the ring has opened
+    @State private var tick: CGFloat = 0     // how much of the tick is drawn
+    @State private var fly = false           // the file cards are out
+    @State private var cards: [Color] = []
+    @State private var files = 0
+    @State private var label = ""
+    @State private var token = 0
+
+    private let stemColors = [Theme.vocals, Theme.drums, Theme.bass, Theme.other]
+
+    var body: some View {
+        ZStack {
+            if phase != .idle {
+                Color.black.opacity(open ? 0.45 : 0).ignoresSafeArea()
+                ZStack {
+                    // Cards flying out of the ring (one per file, in its stem's colour).
+                    ForEach(Array(cards.enumerated()), id: \.offset) { i, c in
+                        let a = Angle.degrees(-90 + (Double(i) - Double(cards.count - 1) / 2) * min(26, 200 / Double(max(cards.count, 1))))
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(c)
+                            .frame(width: 34, height: 44)
+                            .overlay(Image(systemName: "waveform").font(.system(size: 15, weight: .bold)).foregroundColor(.black.opacity(0.6)))
+                            .shadow(color: c.opacity(0.8), radius: 10)
+                            .rotationEffect(.degrees(fly ? (Double(i) - Double(cards.count - 1) / 2) * 9 : 0))
+                            .offset(x: fly ? cos(a.radians) * 190 : 0, y: fly ? sin(a.radians) * 190 : 0)
+                            .scaleEffect(fly ? 1 : 0.2)
+                            .opacity(fly ? 1 : 0)
+                            .animation(.spring(response: 0.55, dampingFraction: 0.6).delay(Double(i) * 0.05), value: fly)
+                    }
+                    ring
+                }
+                .scaleEffect(open ? 1 : 0.1)
+                .opacity(open ? 1 : 0)
+            }
+        }
+        .allowsHitTesting(false)
+        .onChange(of: session.exporting) { _, on in
+            if on { start() } else { stopped() }
+        }
+        .onReceive(celebrate.$exported) { e in
+            guard let e, phase == .working, celebrate.claim(e.n, "show") else { return }
+            cards = Array(e.colors.prefix(12)); files = e.files
+            // Let the working part be seen for a moment even when the export was quick.
+            let wait = max(0, 1.1 - Date().timeIntervalSince(startedAt))
+            let t = token
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { if t == token { finish() } }
+        }
+    }
+
+    private var ring: some View {
+        TimelineView(.animation) { ctx in
+            let time = ctx.date.timeIntervalSinceReferenceDate
+            ZStack {
+                Circle().fill(Theme.panel.opacity(0.96)).frame(width: 220, height: 220)
+                    .shadow(color: (phase == .done ? Theme.bass : Theme.accent).opacity(0.45), radius: 40)
+                // A comet running round while it works; a full green ring when done.
+                if phase == .done {
+                    Circle().stroke(Theme.bass, lineWidth: 5).frame(width: 220, height: 220)
+                } else {
+                    Circle().stroke(Theme.line, lineWidth: 5).frame(width: 220, height: 220)
+                    Circle().trim(from: 0, to: 0.28)
+                        .stroke(AngularGradient(colors: stemColors + [stemColors[0]], center: .center),
+                                style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .frame(width: 220, height: 220)
+                        .rotationEffect(.radians(time * 4.2))
+                }
+                VStack(spacing: 12) {
+                    if phase == .done {
+                        Tick().trim(from: 0, to: tick).stroke(Theme.bass, style: StrokeStyle(lineWidth: 9, lineCap: .round, lineJoin: .round))
+                            .frame(width: 70, height: 56)
+                        Text("\(files) FILE\(files == 1 ? "" : "S") SAVED").font(.system(size: 13, weight: .heavy)).tracking(1.5)
+                            .foregroundColor(.white)
+                    } else {
+                        // The four stems, pulsing like meters.
+                        HStack(alignment: .center, spacing: 9) {
+                            ForEach(0..<4, id: \.self) { i in
+                                let v = 0.35 + 0.65 * abs(sin(time * (3.1 + Double(i) * 0.7) + Double(i) * 1.3))
+                                RoundedRectangle(cornerRadius: 4).fill(stemColors[i])
+                                    .frame(width: 16, height: 18 + 50 * v)
+                                    .shadow(color: stemColors[i].opacity(0.7), radius: 6)
+                            }
+                        }
+                        .frame(height: 70)
+                        Text("EXPORTING").font(.system(size: 13, weight: .heavy)).tracking(2.5).foregroundColor(.white)
+                    }
+                    Text(phase == .done ? "into the folder you chose" : label)
+                        .font(.system(size: 11, weight: .semibold)).foregroundColor(Theme.dim)
+                        .lineLimit(1).frame(maxWidth: 180)
+                }
+            }
+        }
+    }
+
+    private func start() {
+        token += 1
+        phase = .working; startedAt = Date()
+        label = session.exportLabel
+        cards = []; fly = false; tick = 0; open = false
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { open = true }
+    }
+
+    private func finish() {
+        phase = .done
+        withAnimation(.easeOut(duration: 0.45)) { tick = 1 }
+        fly = true
+        let t = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { if t == token { close() } }
+    }
+
+    /// The export ended: without saved files (an error) the show just closes; the message is in the toast.
+    /// (The saved files are announced right after `exporting` goes off.)
+    private func stopped() {
+        let t = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            if t == token, phase == .working, cards.isEmpty { close() }
+        }
+    }
+
+    private func close() {
+        let t = token
+        withAnimation(.easeIn(duration: 0.45)) { open = false; fly = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { if t == token { phase = .idle; cards = [] } }
+    }
+}
+
+/// A tick mark, drawn from its short end.
+struct Tick: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.midY + r.height * 0.05))
+        p.addLine(to: CGPoint(x: r.minX + r.width * 0.36, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        return p
     }
 }
 

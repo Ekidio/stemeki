@@ -39,6 +39,7 @@ struct ContentView: View {
         }
         .background(Theme.bg)
         .foregroundColor(Theme.text)
+        .overlay { ExportShow() }
         .overlay(dropping ? DropOverlay() : nil)
         .overlay { if showIntro { OnboardingView { introSeen = true; withAnimation { showIntro = false } }.transition(.opacity) } }
         .overlay { if splash { SplashView { splash = false; if !introSeen { withAnimation { showIntro = true } } } } }

@@ -90,6 +90,8 @@ final class Session: ObservableObject {
     @Published var fadeMs: Double = 3 { didSet { UserDefaults.standard.set(fadeMs, forKey: "fadeMs") } }
     @Published var toast: Toast?
     @Published var exporting = false
+    /// What is being exported (shown while it runs).
+    var exportLabel = ""
 
     struct Toast: Equatable {
         var text: String
@@ -1189,6 +1191,7 @@ final class Session: ObservableObject {
         case .stems: what = "the DJ stems"
         }
         guard let folder = library.chooseExportFolder(title: "Where should \(what) of “\(song.title)” go?") else { return }
+        exportLabel = what
 
         var jobs: [ExportJob] = []
         var summary = ""
@@ -1260,6 +1263,7 @@ final class Session: ObservableObject {
     /// the mix plus drums, bass, instruments and vocals, with the title, the tempo and a cover.
     private func exportStemFile(_ song: Song, _ g: Grid) {
         guard let folder = library.chooseExportFolder(title: "Where should the DJ stems of “\(song.title)” go?") else { return }
+        exportLabel = "the DJ stems"
         let order: [(StemKind, String, String)] = [(.drums, "Drums", "#FFA821"), (.bass, "Bass", "#3DDC97"),
                                                    (.other, "Instruments", "#5CA8FF"), (.vocals, "Vocals", "#FF5C8A")]
         // Each stem with the edits of the lane it is on (in the view shown).
