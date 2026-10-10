@@ -1114,8 +1114,8 @@ final class Session: ObservableObject {
 
     var exportLanes: [Lane] { lanes.filter { state($0).export } }
 
-    /// The four exports, from the plain to the unique.
-    enum ExportKind { case full, cue, loop, regions }
+    /// The exports, from the plain to the unique, and the DJ Stems file.
+    enum ExportKind { case full, cue, loop, regions, stems }
 
     /// SELECTED MIX: the marked lanes go into one file instead of one file per lane.
     @Published var selectedMix = false { didSet { UserDefaults.standard.set(selectedMix, forKey: "selectedMix") } }
@@ -1132,6 +1132,7 @@ final class Session: ObservableObject {
         case .full, .cue: return true
         case .loop: return loop != nil && loopEnabled
         case .regions: return !regionsToExport.isEmpty
+        case .stems: return true
         }
     }
 
@@ -1145,6 +1146,7 @@ final class Session: ObservableObject {
 
     func export(_ kind: ExportKind) {
         guard let song, let g = grid, canExport(kind) else { return }
+        if kind == .stems { exportStemFile(song, g); return }
         let target = outputBPM ?? g.meanBPM
         let title = Exporter.safeName(song.title)
         let bpm = formatBPM(target) + "bpm"
@@ -1184,6 +1186,7 @@ final class Session: ObservableObject {
         case .cue: what = "the stems from the CUE"
         case .loop: what = "the loop stems"
         case .regions: what = "\(regionsToExport.count) region\(regionsToExport.count == 1 ? "" : "s")"
+        case .stems: what = "the DJ stems"
         }
         guard let folder = library.chooseExportFolder(title: "Where should \(what) of “\(song.title)” go?") else { return }
 
@@ -1229,6 +1232,7 @@ final class Session: ObservableObject {
                                 folder: folder))
             }
             summary = "region\(jobs.count == 1 ? "" : "s")"
+        case .stems: return   // exportStemFile
         }
 
         exporting = true
@@ -1245,6 +1249,59 @@ final class Session: ObservableObject {
                     self.toast = Toast(text: (first ? "Your first STEMEKI export! 🎉 " : "")
                                        + "\(urls.count) file\(urls.count == 1 ? "" : "s") saved · \(label)", files: urls)
                     Celebrate.shared.filesExported(urls)
+                case .failure(let e):
+                    self.toast = Toast(text: e.localizedDescription, files: [], isError: true)
+                }
+            }
+        }
+    }
+
+    /// DJ STEMS: one .stem.mp4 (Native Instruments Stems) with the whole song as edited, at its own tempo:
+    /// the mix plus drums, bass, instruments and vocals, with the title, the tempo and a cover.
+    private func exportStemFile(_ song: Song, _ g: Grid) {
+        guard let folder = library.chooseExportFolder(title: "Where should the DJ stems of “\(song.title)” go?") else { return }
+        let order: [(StemKind, String, String)] = [(.drums, "Drums", "#FFA821"), (.bass, "Bass", "#3DDC97"),
+                                                   (.other, "Instruments", "#5CA8FF"), (.vocals, "Vocals", "#FF5C8A")]
+        // Each stem with the edits of the lane it is on (in the view shown).
+        let parts = order.map { k, _, _ in
+            ExportJob.Part(stems: [k: 1], segs: lanes.first { $0.stems.contains(k) }.flatMap { segments(for: $0.id) })
+        }
+        let outs = [ExportJob.Output(tag: "MASTER", stems: Dictionary(uniqueKeysWithValues: order.map { ($0.0, Float(1)) }),
+                                     parts: parts, name: "0")]
+            + parts.enumerated().map { i, p in ExportJob.Output(tag: order[i].1, stems: p.stems, parts: [p], name: "\(i + 1)") }
+        let b0 = g.beat(at: 0), b1 = g.beat(at: duration)
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("stemeki-stems-\(UUID().uuidString)")
+        let job = ExportJob(stemsDir: library.stemsDir(song), outDir: tmp, baseName: "", rangeName: "",
+                            start: 0, end: duration, outputs: outs, fadeMs: nil, grid: g, beatStart: b0, beats: b1 - b0,
+                            targetBpm: g.meanBPM, stretch: false, acid: nil,
+                            sampleRate: 44100, bits: 32, isFloat: true, channels: 2, ext: "wav")
+        // "Artist - Title" file names give both tags.
+        let parts2 = song.title.components(separatedBy: " - ")
+        let artist = parts2.count > 1 ? parts2[0].trimmingCharacters(in: .whitespaces) : nil
+        let name = parts2.count > 1 ? parts2.dropFirst().joined(separator: " - ").trimmingCharacters(in: .whitespaces) : song.title
+        let source = URL(fileURLWithPath: song.sourcePath)
+        let bpm = Int(g.meanBPM.rounded())
+        let out = folder.appendingPathComponent(Exporter.safeName(song.title) + ".stem.mp4")
+        exporting = true
+        Task.detached(priority: .userInitiated) {
+            let result = Result<URL, Error> {
+                defer { try? FileManager.default.removeItem(at: tmp) }
+                let files = try Exporter.run(job).sorted { $0.lastPathComponent < $1.lastPathComponent }
+                guard files.count == 5 else { throw ExportError.read }
+                let art = StemFile.artwork(of: source) ?? StemFile.makeCover(title: name, artist: artist)
+                try StemFile.write(master: files[0],
+                                   stems: order.enumerated().map { StemFile.Stem(url: files[$0.offset + 1], name: $0.element.1, color: $0.element.2) },
+                                   tags: .init(title: name, artist: artist, bpm: bpm, artwork: art), to: out)
+                return out
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.exporting = false
+                switch result {
+                case .success(let url):
+                    let first = Celebrate.firstExport()
+                    self.toast = Toast(text: (first ? "Your first STEMEKI export! 🎉 " : "") + "DJ stems saved · mix + 4 stems", files: [url])
+                    Celebrate.shared.filesExported([url])
                 case .failure(let e):
                     self.toast = Toast(text: e.localizedDescription, files: [], isError: true)
                 }

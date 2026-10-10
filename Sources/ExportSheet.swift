@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// EXPORT…: the four ways to export, side by side, each with a little picture of what goes into the file.
+/// EXPORT…: the ways to export, side by side, each with a little picture of what goes into the file.
 struct ExportSheet: View {
     @EnvironmentObject var session: Session
     @EnvironmentObject var library: Library
@@ -32,7 +32,7 @@ struct ExportSheet: View {
             footer
         }
         .padding(22)
-        .frame(width: 1080)
+        .frame(width: 1340)
         .background(Theme.bg)
         .preferredColorScheme(.dark)
     }
@@ -70,6 +70,10 @@ struct ExportSheet: View {
                    facts: [("Tempo", "\(bpm) BPM"), ("Edits", "included"), ("Files", regions == 0 ? "one per region" : "\(regions) (one per region)")],
                    example: "\(title)_\(tag)_\(bpm)bpm_REGION_17_20.wav",
                    blocked: noLanes ?? (regions == 0 ? "Draw regions on the lanes in EXPORT mode first." : nil)),
+            Option(kind: .stems, number: 5, title: "DJ STEMS",
+                   text: "One file for DJ software and players that open Stems (Traktor, Mixxx…): the mix and the four stems, with the title, the tempo and a cover. Any music player plays it as a normal song.",
+                   facts: [("Tempo", "original"), ("Edits", "included"), ("Tracks", "mix + 4 stems"), ("Format", "AAC 256 kbps")],
+                   example: "\(title).stem.mp4", blocked: nil),
         ]
     }
 
@@ -160,6 +164,7 @@ struct ExportPicture: View {
                 case .cue: return [(cue, 1)]
                 case .loop: return [(0.46, 0.7)]
                 case .regions: return [[(0.22, 0.4)], [(0.55, 0.72), (0.8, 0.93)], [(0.3, 0.5)], []][lane]
+                case .stems: return [(0, 1)]
                 }
             }
             // Ruler with bar ticks.
@@ -207,6 +212,8 @@ struct ExportPicture: View {
             case .regions:
                 ctx.draw(Text("ONE FILE PER REGION").font(Theme.mono(7.5, .heavy)).foregroundColor(.white.opacity(0.8)),
                          at: CGPoint(x: w / 2, y: 8))
+            case .stems:
+                drawBracket(ctx, from: 8, to: w - 8, y: 6, label: "MIX + 4 STEMS")
             }
         }
     }
