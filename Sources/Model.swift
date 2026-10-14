@@ -58,6 +58,8 @@ struct Song: Codable, Identifiable, Equatable {
     var id = UUID()
     var title: String
     var sourcePath: String
+    /// A video (or a file macOS cannot read) the audio was taken from; `sourcePath` is then that audio as WAV.
+    var originalPath: String?
     var addedAt = Date()
     var state: SongState = .queued
     var error: String?

@@ -111,6 +111,22 @@ struct SidebarView: View {
 
             ScrollView {
                 LazyVStack(spacing: 4) {
+                    // Videos whose audio is being taken out.
+                    ForEach(library.importing, id: \.self) { url in
+                        HStack(spacing: 10) {
+                            ProgressView().controlSize(.small)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(url.deletingPathExtension().lastPathComponent)
+                                    .font(.system(size: 13, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                                Text("Taking the audio out of the \(url.pathExtension.uppercased())…")
+                                    .font(.system(size: 10.5, weight: .semibold)).foregroundColor(Theme.dim)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(Theme.panel))
+                        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Theme.line))
+                    }
                     ForEach(library.songs) { song in
                         SongRow(song: song, selected: song.id == library.selectedID,
                                 progress: library.progress[song.id], unsaved: library.isUnsaved(song))

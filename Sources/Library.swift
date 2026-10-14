@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import AppKit
+import UniformTypeIdentifiers
 
 /// The song list, the stem folders on disk and the separation queue.
 @MainActor
@@ -134,8 +135,8 @@ final class Library: ObservableObject {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.audio]
-        panel.message = "Choose the songs to separate"
+        panel.allowedContentTypes = [.audio, .movie] + ["webm", "mkv", "avi", "opus", "weba", "mka"].compactMap { UTType(filenameExtension: $0) }
+        panel.message = "Choose the songs (audio or video) to separate"
         if panel.runModal() == .OK { add(panel.urls) }
     }
 
@@ -152,25 +153,16 @@ final class Library: ObservableObject {
                 continue
             }
             let ext = url.pathExtension.lowercased()
-            guard Self.audioExtensions.contains(ext) else { continue }
-            if let existing = songs.first(where: { $0.sourcePath == url.path }) {
+            guard Self.audioExtensions.contains(ext) || MediaImport.videoExtensions.contains(ext) else { continue }
+            if let existing = songs.first(where: { $0.sourcePath == url.path || $0.originalPath == url.path }) {
                 firstNew = firstNew ?? existing.id
                 continue
             }
-            guard let file = try? AVAudioFile(forReading: url) else { continue }
-            let settings = file.fileFormat.settings
-            let isPCM = (settings[AVFormatIDKey] as? UInt32) == kAudioFormatLinearPCM
-            let bits = isPCM ? (settings[AVLinearPCMBitDepthKey] as? Int ?? 24)
-                : (settings[AVEncoderBitDepthHintKey] as? Int ?? (ext == "flac" ? 24 : 24))
-            let song = Song(title: url.deletingPathExtension().lastPathComponent,
-                            sourcePath: url.path,
-                            srcExt: ext,
-                            srcSampleRate: file.fileFormat.sampleRate,
-                            srcBits: bits,
-                            srcFloat: isPCM && (settings[AVLinearPCMIsFloatKey] as? Bool ?? false),
-                            srcChannels: Int(file.fileFormat.channelCount),
-                            duration: Double(file.length) / file.fileFormat.sampleRate,
-                            cueBased: true)
+            // A video, or audio macOS cannot open: its audio is taken out first (in the background).
+            guard Self.audioExtensions.contains(ext), let song = makeSong(audio: url) else {
+                importMedia(url)
+                continue
+            }
             songs.insert(song, at: 0)
             firstNew = firstNew ?? song.id
         }
@@ -178,6 +170,63 @@ final class Library: ObservableObject {
         // Show the song just added: its waveform and the splitting animation come up right away.
         if let firstNew { selectedID = firstNew }
         processNext()
+    }
+
+    private func makeSong(audio url: URL, id: UUID = UUID(), title: String? = nil, original: URL? = nil) -> Song? {
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let settings = file.fileFormat.settings
+        let isPCM = (settings[AVFormatIDKey] as? UInt32) == kAudioFormatLinearPCM
+        // Audio taken from a video is lossy anyway: its exports are 24-bit WAV.
+        let bits = original != nil ? 24 : isPCM ? (settings[AVLinearPCMBitDepthKey] as? Int ?? 24)
+            : (settings[AVEncoderBitDepthHintKey] as? Int ?? 24)
+        var song = Song(id: id, title: title ?? url.deletingPathExtension().lastPathComponent,
+                        sourcePath: url.path,
+                        srcExt: url.pathExtension.lowercased(),
+                        srcSampleRate: file.fileFormat.sampleRate,
+                        srcBits: bits,
+                        srcFloat: original == nil && isPCM && (settings[AVLinearPCMIsFloatKey] as? Bool ?? false),
+                        srcChannels: Int(file.fileFormat.channelCount),
+                        duration: Double(file.length) / file.fileFormat.sampleRate,
+                        cueBased: true)
+        song.originalPath = original?.path
+        return song
+    }
+
+    /// Files whose audio is being taken out right now (shown in the song list).
+    @Published private(set) var importing: [URL] = []
+
+    private func importMedia(_ url: URL) {
+        guard !importing.contains(url) else { return }
+        importing.append(url)
+        let id = UUID()
+        let dir = songsDir.appendingPathComponent(id.uuidString)
+        let wav = dir.appendingPathComponent("source.wav")
+        let python = self.python ?? (Engine.hasBase ? Engine.python.path : nil)
+        Task.detached(priority: .userInitiated) {
+            let result = Result<Void, Error> {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try MediaImport.extract(url, to: wav, python: python)
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.importing.removeAll { $0 == url }
+                switch result {
+                case .success:
+                    guard let song = self.makeSong(audio: wav, id: id, title: url.deletingPathExtension().lastPathComponent, original: url) else {
+                        try? FileManager.default.trashItem(at: dir, resultingItemURL: nil)
+                        projectAlert("Could not read the audio of “\(url.lastPathComponent)”", MediaImport.ImportError(message: "The audio taken out of it is not readable."))
+                        return
+                    }
+                    self.songs.insert(song, at: 0)
+                    self.save()
+                    self.selectedID = song.id
+                    self.processNext()
+                case .failure(let e):
+                    try? FileManager.default.trashItem(at: dir, resultingItemURL: nil)
+                    projectAlert("Could not read the audio of “\(url.lastPathComponent)”", e)
+                }
+            }
+        }
     }
 
     func remove(_ id: UUID) {
