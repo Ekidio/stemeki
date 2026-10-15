@@ -405,10 +405,21 @@ final class Session: ObservableObject {
                             len: g.fullEndT - g.fullStartT + 2 * ticksPerBar)]
     }
 
-    /// Clicking inside a region: cut the lane's audio at its start and end. The piece between is selected.
+    /// Clicking inside a selection: cut the audio at its start and end, on every lane it is selected on
+    /// (one selection drawn over several lanes cuts them all). The pieces between are selected.
     func cutAtRegion(_ rid: UUID) {
         guard let r = activeRegionList.first(where: { $0.id == rid }) else { return }
+        // The other selections drawn with it: selected, over the same span.
+        let group = activeRegionList.filter { $0.id == rid || (selected.contains($0.id) && $0.start == r.start && $0.len == r.len) }
         checkpoint()
+        var all: Set<UUID> = []
+        for m in group { all.formUnion(cut(m)) }
+        selected = all
+    }
+
+    /// Cuts one lane at a selection's edges; returns the pieces inside it.
+    private func cut(_ r: Region) -> [UUID] {
+        let rid = r.id
         var list = clipsWithLane(r.laneId, allClips)
         var inside: [UUID] = []
         var out: [Clip] = []
@@ -436,17 +447,17 @@ final class Session: ObservableObject {
         if loopFollows.contains(rid) { loopFollows.remove(rid); loopFollows.formUnion(inside) }
         storeClips(list)
         storeActive(activeRegionList.filter { $0.id != rid })
-        selected = Set(inside)
+        return inside
     }
 
     /// How far past the song pieces may go (ticks): room for a longer mix.
     private var maxEndT: Int { (grid?.fullEndT ?? 0) + 512 * ticksPerBar }
 
-    /// Moves clips from their `base` state by whole ticks (same lane). Past the end of the song is fine:
-    /// the timeline grows with them.
-    func moveClips(_ base: [Clip], ticks: Int) {
+    /// Moves clips from their `base` state by whole ticks and, in 4 STEMS, by `laneDelta` lanes. Past the end
+    /// of the song is fine: the timeline grows with them.
+    func moveClips(_ base: [Clip], ticks: Int, lanes laneDelta: Int = 0) {
         guard let g = grid else { return }
-        var list = allClips
+        var list = relaned(base, laneDelta)
         for c in base {
             guard let i = list.firstIndex(where: { $0.id == c.id }) else { continue }
             list[i].start = max(g.fullStartT - ticksPerBar, min(c.start + ticks, maxEndT - c.len))
@@ -454,12 +465,38 @@ final class Session: ObservableObject {
         if list != allClips { storeClips(list) }
     }
 
+    /// Pieces change lanes only where every lane is one stem (4 STEMS): a piece on another lane keeps playing
+    /// its own stem there.
+    var clipsCanChangeLane: Bool { lanes.allSatisfy { $0.stems.count == 1 } }
+
+    /// All clips with the `base` pieces put `delta` lanes away from where they started (a lane that had no
+    /// edits gets its whole-song piece first, underneath).
+    private func relaned(_ base: [Clip], _ delta: Int) -> [Clip] {
+        var list = allClips
+        let ls = lanes
+        for c in base {
+            guard let i = list.firstIndex(where: { $0.id == c.id }) else { continue }
+            guard delta != 0, clipsCanChangeLane, let li = ls.firstIndex(where: { $0.id == c.laneId }) else {
+                list[i].laneId = c.laneId; list[i].stem = c.stem; continue
+            }
+            let to = ls[max(0, min(ls.count - 1, li + delta))]
+            if !list.contains(where: { $0.laneId == to.id }) {
+                list.insert(contentsOf: clipsWithLane(to.id, []), at: 0)
+            }
+            let j = list.firstIndex(where: { $0.id == c.id })!
+            let own = c.stem ?? ls[li].stems.first
+            list[j].laneId = to.id
+            list[j].stem = own == to.stems.first ? nil : own
+        }
+        return list
+    }
+
     /// ⌘-drag: the pieces follow the mouse freely, to the sample. Each frame lands on the nearest sixteenth and
     /// the rest goes into the audio's slide inside it, so the sound is exactly `seconds` away from where it was.
-    func moveClipsFree(_ base: [Clip], seconds dt: Double) {
+    func moveClipsFree(_ base: [Clip], seconds dt: Double, lanes laneDelta: Int = 0) {
         guard let g = grid else { return }
         let sr = player.stemRate
-        var list = allClips
+        var list = relaned(base, laneDelta)
         for c in base {
             guard let i = list.firstIndex(where: { $0.id == c.id }) else { continue }
             let k = Int(g.tick(at: g.tickTime(c.start) + dt).rounded())
@@ -504,6 +541,30 @@ final class Session: ObservableObject {
         return nr.id
     }
 
+    /// A selection drawn over several lanes: one region per lane in `ls`, all with the same span (regions of the
+    /// group on lanes no longer covered go away). Returns the group, lane → region.
+    func spanRegions(_ group: [String: UUID], lanes ls: [Lane], start: Int, len: Int) -> [String: UUID] {
+        guard let (s, n) = clampSpan(start, max(1, len)) else { return group }
+        var list = activeRegionList
+        var g = group
+        for (lid, rid) in g where !ls.contains(where: { $0.id == lid }) {
+            list.removeAll { $0.id == rid }
+            g[lid] = nil
+        }
+        for lane in ls {
+            if let rid = g[lane.id], let i = list.firstIndex(where: { $0.id == rid }) {
+                list[i].start = s; list[i].len = n
+            } else {
+                let r = Region(laneId: lane.id, start: s, len: n)
+                list.append(r)
+                g[lane.id] = r.id
+            }
+        }
+        if list != activeRegionList { storeActive(list) }
+        selected = Set(g.values)
+        return g
+    }
+
     func setRegion(_ rid: UUID, start: Int, len: Int) {
         guard let (s, n) = clampSpan(start, len) else { return }
         var list = activeRegionList
@@ -513,7 +574,6 @@ final class Session: ObservableObject {
         storeActive(list)
     }
 
-    /// Moves regions from their `base` state by whole ticks and lanes (lane index within the lanes on screen).
     /// EDIT: the selected pieces whose audio slides sample by sample (← →).
     var slidableClips: [Clip] { workMode == .edit ? allClips.filter { selected.contains($0.id) } : [] }
 
@@ -546,6 +606,7 @@ final class Session: ObservableObject {
         return set.count == 1 ? set.first : nil
     }
 
+    /// Moves regions from their `base` state by whole ticks and lanes (lane index within the lanes on screen).
     func moveRegions(_ base: [Region], ticks: Int, lanes laneDelta: Int) {
         let ls = lanes
         var list = activeRegionList
@@ -658,6 +719,7 @@ final class Session: ObservableObject {
             guard b > a else { return nil }
             var c = Clip(laneId: laneId, start: a, src: s.src + (a - s.tl), len: b - a)
             c.slip = s.slip
+            c.stem = s.stem
             return c
         }
     }

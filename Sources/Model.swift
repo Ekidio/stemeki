@@ -318,6 +318,8 @@ struct Clip: Codable, Identifiable, Equatable {
     var fadeOut: Double = 0
     /// The audio slid inside the piece, off the grid (seconds, whole samples; positive = later).
     var slip: Double = 0
+    /// Moved here from another lane: the stem whose audio it plays (nil = the lane's own).
+    var stem: StemKind?
 
     var end: Int { start + len }
 
@@ -325,7 +327,7 @@ struct Clip: Codable, Identifiable, Equatable {
         self.id = id; self.laneId = laneId; self.start = start; self.src = src; self.len = len
     }
 
-    private enum K: String, CodingKey { case id, laneId, startT, srcT, lenT, fadeIn, fadeOut, slip, start, src, len, startBar, srcBar, bars }
+    private enum K: String, CodingKey { case id, laneId, startT, srcT, lenT, fadeIn, fadeOut, slip, stem, start, src, len, startBar, srcBar, bars }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -342,6 +344,7 @@ struct Clip: Codable, Identifiable, Equatable {
         fadeIn = try c.decodeIfPresent(Double.self, forKey: .fadeIn) ?? 0
         fadeOut = try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 0
         slip = try c.decodeIfPresent(Double.self, forKey: .slip) ?? 0
+        stem = try c.decodeIfPresent(StemKind.self, forKey: .stem)
     }
     func encode(to e: Encoder) throws {
         var c = e.container(keyedBy: K.self)
@@ -350,6 +353,7 @@ struct Clip: Codable, Identifiable, Equatable {
         if fadeIn > 0 { try c.encode(fadeIn, forKey: .fadeIn) }
         if fadeOut > 0 { try c.encode(fadeOut, forKey: .fadeOut) }
         if slip != 0 { try c.encode(slip, forKey: .slip) }
+        if let stem { try c.encode(stem, forKey: .stem) }
     }
 
     /// Keeps the fades inside the piece (together at most its length).
@@ -370,6 +374,8 @@ struct Seg: Equatable, Sendable {
     var fadeOut: Double = 0
     /// The audio slid off the grid (seconds, positive = later): song time = the grid's time − slip.
     var slip: Double = 0
+    /// The stem it plays when it came from another lane (nil = the lane's own).
+    var stem: StemKind?
 
     var hasFades: Bool { fadeIn > 0 || fadeOut > 0 }
 
@@ -425,13 +431,13 @@ extension Array where Element == Clip {
             guard let c = list.last(where: { b >= $0.start && b < $0.end }) else { continue }
             let src = b - c.start + c.src
             // Runs join across pieces only where no fade sits on the seam.
-            if var last = segs.last, last.tl + last.len == b, last.src + last.len == src, last.slip == c.slip,
+            if var last = segs.last, last.tl + last.len == b, last.src + last.len == src, last.slip == c.slip, last.stem == c.stem,
                owner[owner.count - 1].id == c.id || (owner[owner.count - 1].fadeOut == 0 && c.fadeIn == 0) {
                 last.len += 1
                 segs[segs.count - 1] = last
                 owner[owner.count - 1] = c
             } else {
-                segs.append(Seg(tl: b, src: src, len: 1, fadeIn: b == c.start ? c.fadeIn : 0, slip: c.slip))
+                segs.append(Seg(tl: b, src: src, len: 1, fadeIn: b == c.start ? c.fadeIn : 0, slip: c.slip, stem: c.stem))
                 owner.append(c)
             }
         }
@@ -488,6 +494,18 @@ extension Grid {
     func sourceTime(_ t: Double, _ segs: [Seg]?) -> Double? {
         guard let segs else { return t }
         return sourceSeconds(beat(at: t), segs)
+    }
+
+    /// Song time heard at timeline time t and the stem it comes from when a piece of another lane plays
+    /// there (nil = silence).
+    func sourceHit(_ t: Double, _ segs: [Seg]?) -> (t: Double, stem: StemKind?)? {
+        guard let segs else { return (t, nil) }
+        let b = beat(at: t)
+        let k = (b - firstBarBeat) * Double(ticksPerBeat)
+        for s in segs where k >= Double(s.tl) && k < Double(s.tl + s.len) {
+            return (time(b + Double(s.src - s.tl) / Double(ticksPerBeat)) - s.slip, s.stem)
+        }
+        return nil
     }
 
     /// Song time heard at timeline beat b (the piece's slip included; nil = silence).

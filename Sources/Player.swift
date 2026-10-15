@@ -498,8 +498,10 @@ final class StemPlayer: ObservableObject {
     }
 
     /// Timeline frames [from, to) of an edited stem, put together from its pieces (2 ms fades at the cuts).
+    /// `others`: the stems' files, for pieces moved here from another lane.
     nonisolated static func renderTimeline(url: URL, segs: [Seg], grid g: Grid, sampleRate sr: Double,
-                                           from: AVAudioFramePosition, to: AVAudioFramePosition) -> AVAudioPCMBuffer? {
+                                           from: AVAudioFramePosition, to: AVAudioFramePosition,
+                                           others: [StemKind: URL] = [:]) -> AVAudioPCMBuffer? {
         guard to > from, let probe = try? AVAudioFile(forReading: url),
               let out = AVAudioPCMBuffer(pcmFormat: probe.processingFormat, frameCapacity: AVAudioFrameCount(to - from)),
               let d = out.floatChannelData else { return nil }
@@ -515,7 +517,7 @@ final class StemPlayer: ObservableObject {
             let a = max(tl0, from), b = min(tl1, to)
             guard b > a else { continue }
             let srcA = src0 + (a - tl0)
-            guard let piece = readBuffer(url: url, from: srcA, to: srcA + (b - a)) else { continue }
+            guard let piece = readBuffer(url: sg.stem.flatMap { others[$0] } ?? url, from: srcA, to: srcA + (b - a)) else { continue }
             if sg.hasFades { applyFades(piece, sg, grid: g, startTime: Double(a) / sr) }
             guard let p = piece.floatChannelData else { continue }
             let len = Int(b - a), off = Int(a - from)
@@ -652,7 +654,7 @@ final class StemPlayer: ObservableObject {
                     let edited = segs[kind]
                     func read(_ a: AVAudioFramePosition, _ b: AVAudioFramePosition) -> AVAudioPCMBuffer? {
                         if let edited, let g = clickGrid {
-                            return Self.renderTimeline(url: url, segs: edited, grid: g, sampleRate: sampleRate, from: a, to: b)
+                            return Self.renderTimeline(url: url, segs: edited, grid: g, sampleRate: sampleRate, from: a, to: b, others: urls)
                         }
                         return Self.readBuffer(url: url, from: a, to: b)
                     }
@@ -693,12 +695,14 @@ final class StemPlayer: ObservableObject {
                     for (a, b, faded) in [(tl0, inEnd, true), (inEnd, outStart, false), (outStart, tl1, true)] where b > a && b > fromT {
                         var at = max(a, fromT)
                         var sf = frame(srcT + (at - tl0))
-                        let ef = min(frame(srcT + (b - tl0)), file.length)
+                        let ef = min(frame(srcT + (b - tl0)), (sg.stem.flatMap { files[$0] } ?? file).length)
                         if sf < 0 { at += Double(-sf) / sampleRate; sf = 0 }
                         guard ef > sf else { continue }
                         let when = AVAudioTime(sampleTime: AVAudioFramePosition(((at - fromT) * sampleRate).rounded()), atRate: sampleRate)
-                        if faded, let url = urls[kind], let buf = Self.readBuffer(url: url, from: sf, to: ef) {
-                            Self.applyFades(buf, sg, grid: g, startTime: at)
+                        // A piece from another lane's stem plays from a buffer of that stem (each node keeps to its own file).
+                        let foreign = sg.stem.flatMap { urls[$0] }
+                        if faded || foreign != nil, let url = foreign ?? urls[kind], let buf = Self.readBuffer(url: url, from: sf, to: ef) {
+                            if faded { Self.applyFades(buf, sg, grid: g, startTime: at) }
                             node.scheduleBuffer(buf, at: when, options: [])
                         } else {
                             node.scheduleSegment(file, startingFrame: sf, frameCount: AVAudioFrameCount(ef - sf), at: when)

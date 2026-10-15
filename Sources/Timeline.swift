@@ -134,6 +134,9 @@ struct TimelineCanvas: View {
             let sr = first.sampleRate
             let samplesPerCol = viewLength * sr / Double(cols - 1)
             let levels = sources.map { $0.level(samplesPerColumn: samplesPerCol) }
+            // Pieces moved here from another lane draw their own stem.
+            let moved = Set(laneSegs?.compactMap(\.stem) ?? [])
+            let movedLevels = Dictionary(uniqueKeysWithValues: moved.compactMap { k in peaks[k].map { (k, [$0.level(samplesPerColumn: samplesPerCol)]) } })
             // A summed lane (instrumental) can peak above any single stem.
             let norm = max(sources.count > 1 ? (sources.map(\.maxPeak).max() ?? 1) * 1.5 : first.maxPeak, 0.02)
             let scale = half / CGFloat(norm)
@@ -144,16 +147,16 @@ struct TimelineCanvas: View {
                 let x = CGFloat(c) * colStep
                 let tl = viewStart + Double(x) / Double(w) * viewLength
                 // Edited lane: read where this moment's piece comes from (nothing = deleted).
-                guard let st = laneSegs == nil ? tl : grid?.sourceTime(tl, laneSegs) else {
+                guard let hit = laneSegs == nil ? (tl, nil) : grid?.sourceHit(tl, laneSegs) else {
                     tops.append(CGPoint(x: x, y: mid - 0.25)); bottoms.append(CGPoint(x: x, y: mid + 0.25))
                     rmsTop.append(CGPoint(x: x, y: mid - 0.25)); rmsBottom.append(CGPoint(x: x, y: mid + 0.25))
                     continue
                 }
-                let s0 = st * sr
+                let s0 = hit.t * sr
                 let s1 = s0 + samplesPerCol
                 var lo: Float = 0, hi: Float = 0, rm: Float = 0
                 var any = false
-                for l in levels {
+                for l in hit.stem.flatMap({ movedLevels[$0] }) ?? levels {
                     let bs = Double(l.binSize)
                     let count = l.mins.count
                     if samplesPerCol < bs {
@@ -264,6 +267,11 @@ struct TimelineCanvas: View {
                 if sel { ctx.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(Color.white.opacity(0.08))) }
                 ctx.stroke(Path(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), cornerRadius: 3),
                            with: .color(sel ? Color.white : lane.color.opacity(0.55)), lineWidth: sel ? 2 : 1)
+                // A piece from another lane: where its sound comes from.
+                if let k = c.stem, let from = Lane.all.first(where: { $0.stems == [k] }), x1 - x0 > 40 {
+                    ctx.draw(Text("◂ " + from.title).font(Theme.mono(9, .heavy)).foregroundColor(from.color),
+                             at: CGPoint(x: max(x0, 0) + 6, y: rect.maxY - 9), anchor: .leading)
+                }
                 // Fades: the faded part darkened above a quarter-sine curve, and (EDIT) a handle on each top corner.
                 let sb = g.firstBarBeat + Double(c.start) / Double(ticksPerBeat)
                 let eb = g.firstBarBeat + Double(c.end) / Double(ticksPerBeat)
@@ -490,8 +498,9 @@ struct TimelineInteraction: NSViewRepresentable {
             case create(Double, Target)
             case move(Double, Int, Int, Target)                // loop: t0, original start, bars
             case regions(Double, CGFloat, [Region])            // t0, y0, their state at the start
-            case clips(Double, [Clip])                         // t0, their state at the start
-            case clipsFree(Double, [Clip])                     // ⌘: the same, not snapped (to the sample)
+            case clips(Double, CGFloat, [Clip])                // t0, y0, their state at the start
+            case clipsFree(Double, CGFloat, [Clip])            // ⌘: the same, not snapped (to the sample)
+            case createRegions(Double, Int, [String: UUID])    // a selection drawn over lanes: t0, first lane, lane → region
             case resizeStart(Int, Target)                      // fixed end (exclusive)
             case resizeEnd(Int, Target)                        // fixed start
             case cue                                           // dragging the CUE flag
@@ -709,10 +718,10 @@ struct TimelineInteraction: NSViewRepresentable {
             case .scrub: session.player.seek(t)
             case .pending(let t0, let laneId, _):
                 guard moved else { return }
-                if let laneId, let lane = session.lanes.first(where: { $0.id == laneId }) {
+                if let laneId, let li = session.lanes.firstIndex(where: { $0.id == laneId }) {
                     let (s, n) = span(t0, t, unit(nil, size))
-                    let id = session.addRegion(lane: lane, start: s, len: n)
-                    drag = .create(t0, .region(id))
+                    let id = session.addRegion(lane: session.lanes[li], start: s, len: n)
+                    drag = .createRegions(t0, li, [laneId: id])
                 } else {
                     let (s, n) = span(t0, t, ticksPerBar)
                     session.loopEnabled = true
@@ -743,7 +752,7 @@ struct TimelineInteraction: NSViewRepresentable {
                     session.checkpoint()
                     base = session.clips.filter { session.selected.contains($0.id) }
                 }
-                drag = downMods.contains(.command) ? .clipsFree(t0, base) : .clips(t0, base)
+                drag = downMods.contains(.command) ? .clipsFree(t0, downPoint.y, base) : .clips(t0, downPoint.y, base)
                 NSCursor.closedHand.set()
             case .create(let t0, let tg):
                 let (s, n) = span(t0, t, unit(tg, size))
@@ -753,10 +762,20 @@ struct TimelineInteraction: NSViewRepresentable {
             case .regions(let t0, let y0, let base):
                 let lanes = Int(((p.y - y0) / laneHeight(size)).rounded())
                 session.moveRegions(base, ticks: delta(t0, unit(nil, size)), lanes: lanes)
-            case .clips(let t0, let base):
-                session.moveClips(base, ticks: delta(t0, unit(nil, size)))
-            case .clipsFree(let t0, let base):
-                session.moveClipsFree(base, seconds: t - t0)
+            case .clips(let t0, let y0, let base):
+                // Up or down: to another lane (4 STEMS), the piece keeps its own stem there.
+                let lanes = Int(((p.y - y0) / laneHeight(size)).rounded())
+                session.moveClips(base, ticks: delta(t0, unit(nil, size)), lanes: lanes)
+            case .clipsFree(let t0, let y0, let base):
+                let lanes = Int(((p.y - y0) / laneHeight(size)).rounded())
+                session.moveClipsFree(base, seconds: t - t0, lanes: lanes)
+            case .createRegions(let t0, let li0, let group):
+                // Down or up over the lanes: the same span on each of them.
+                let n = session.lanes.count
+                let li = max(0, min(n - 1, Int(((p.y - rulerHeight) / laneHeight(size)).rounded(.down))))
+                let ls = Array(session.lanes[min(li0, li)...max(li0, li)])
+                let (s, len) = span(t0, t, unit(nil, size))
+                drag = .createRegions(t0, li0, session.spanRegions(group, lanes: ls, start: s, len: len))
             case .cue:
                 session.cueGhost = g.time(cueTarget(t, size))
             case .fade(let c, let isIn):
@@ -807,7 +826,7 @@ struct TimelineInteraction: NSViewRepresentable {
                 if !downMods.contains(.shift) && session.workMode == .edit { session.cutAtRegion(id) }
             case .pendingClip(_, let id):
                 session.selected = [id]
-            case .clips(_, let base), .clipsFree(_, let base):
+            case .clips(_, _, let base), .clipsFree(_, _, let base):
                 session.resolveOverlaps(Set(base.map(\.id)))
             case .trimStart(_, let c), .trimEnd(_, let c):
                 session.resolveOverlaps([c.id])

@@ -164,15 +164,41 @@ enum Exporter {
             let n = Int(min(t.frameLength, b.frameLength))
             for c in 0..<Int(b.format.channelCount) { for i in 0..<n { d[c][i] += s[c][i] * gain } }
         }
+        let stemURLs = Dictionary(uniqueKeysWithValues: StemKind.separated.map { ($0, job.stemsDir.appendingPathComponent($0.fileName)) })
         for part in parts {
             if !warp {
                 for (kind, gain) in part.stems {
                     let url = job.stemsDir.appendingPathComponent(kind.fileName)
-                    let b = part.segs.map { StemPlayer.renderTimeline(url: url, segs: $0, grid: g, sampleRate: stemRate, from: from, to: to) }
+                    let b = part.segs.map { StemPlayer.renderTimeline(url: url, segs: $0, grid: g, sampleRate: stemRate, from: from, to: to, others: stemURLs) }
                         ?? StemPlayer.readBuffer(url: url, from: from, to: to)
                     guard let b else { throw ExportError.read }
                     add(b, gain)
                 }
+                continue
+            }
+            if let segs = part.segs, segs.contains(where: { $0.stem != nil }) {
+                // Pieces moved here from other lanes: the lane is put together as it plays (their stems, slides
+                // and fades included), then that is stretched onto the tempo like an unedited lane.
+                let beat0 = job.beatStart - preBeats
+                let outBeats = job.beats + preBeats * 2
+                let outFrames = Int((outBeats * 60 / job.targetBpm * stemRate).rounded())
+                let inFrom = AVAudioFramePosition(((g.time(beat0) - 0.5) * stemRate).rounded())
+                let inTo = AVAudioFramePosition(((g.time(beat0 + outBeats) + 0.5) * stemRate).rounded())
+                var lane: AVAudioPCMBuffer?
+                for (kind, gain) in part.stems {
+                    guard let b = StemPlayer.renderTimeline(url: stemURLs[kind]!, segs: segs, grid: g, sampleRate: stemRate,
+                                                            from: inFrom, to: inTo, others: stemURLs),
+                          let d = b.floatChannelData else { throw ExportError.read }
+                    if gain != 1 { for c in 0..<Int(b.format.channelCount) { for i in 0..<Int(b.frameLength) { d[c][i] *= gain } } }
+                    if let l = lane, let ld = l.floatChannelData {
+                        for c in 0..<Int(b.format.channelCount) { for i in 0..<Int(min(l.frameLength, b.frameLength)) { ld[c][i] += d[c][i] } }
+                    } else { lane = b }
+                }
+                guard let input = lane else { throw ExportError.read }
+                let inStart = Double(inFrom) / stemRate
+                add(try wsola(input, frames: outFrames) { o in
+                    (g.time(beat0 + Double(o) / stemRate * job.targetBpm / 60) - inStart) * stemRate
+                }, 1)
                 continue
             }
             // Which stretch of the song this part reads from.
