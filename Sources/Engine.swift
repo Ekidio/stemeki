@@ -5,14 +5,25 @@ import SwiftUI
 /// STEMEKI's own separation engine: a private Python with Demucs, set up by one click
 /// in ~/Library/Application Support/STEMEKI/Engine, for Macs without a Python of their own.
 enum Engine {
-    static let pythonURL = URL(string: "https://github.com/astral-sh/python-build-standalone/releases/download/20250317/cpython-3.10.16+20250317-aarch64-apple-darwin-install_only.tar.gz")!
+    /// Fallbacks (November 2026: the beat model's original server answered HTTP 500): GitHub → ekidio.hu → original.
+    /// The same files as CHORDEKI's engine, mirrored there; the SHA-256 checks accept only the exact same file.
+    static let mirror = "https://ekidio.hu/download/chordeki/engine/"
+    static let pythonFile = "cpython-3.10.16+20250317-aarch64-apple-darwin-install_only.tar.gz"
+    static let pythonURLs = [
+        URL(string: "https://github.com/astral-sh/python-build-standalone/releases/download/20250317/\(pythonFile)")!,
+        URL(string: mirror + pythonFile.replacingOccurrences(of: "+", with: "%2B"))!,
+    ]
     static let pythonSHA256 = "e99f8457d9c79592c036489c5cfa78df76e4762d170665e499833e045d82608f"
     static let modelURL = URL(string: "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th")!
     static let modelFile = "955717e8-8726e21a.th"
     /// torch.hub checks the file against this prefix of its SHA-256.
     static let modelHashPrefix = "8726e21a"
     /// The beat / downbeat model (Beat This!, JKU Linz, MIT), where its own loader looks for it.
-    static let beatModelURL = URL(string: "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt")!
+    static let beatModelURLs = [
+        URL(string: "https://github.com/Ekidio/chordeki/releases/download/engine-models/beat_this-final0.ckpt")!,
+        URL(string: mirror + "beat_this-final0.ckpt")!,
+        URL(string: "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt")!,
+    ]
     static let beatModelFile = "beat_this-final0.ckpt"
     static let beatModelSHA256 = "8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb8331"
     /// Native packages must come as ready-made wheels: no compiler on the user's Mac.
@@ -68,6 +79,24 @@ final class EngineInstaller: ObservableObject {
         }
     }
 
+    /// Downloads from the first source that works and gives the expected file (SHA-256); otherwise the last error.
+    private func fetchFirst(_ urls: [URL], to dest: URL, sha256: String, what: String,
+                            progress: @escaping @MainActor (Double, Int64, Int64) -> Void) async throws {
+        var lastError: Error = EngineError("The \(what) could not be downloaded. Please try again.")
+        for url in urls {
+            try? FileManager.default.removeItem(at: dest)
+            do {
+                try await Downloader.fetch(url, to: dest, progress: progress)
+                if try Self.sha256(dest) == sha256 { return }
+                lastError = EngineError("The \(what) download is damaged (checksum mismatch). Please try again.")
+            } catch {
+                lastError = error   // try the next source
+            }
+        }
+        try? FileManager.default.removeItem(at: dest)
+        throw lastError
+    }
+
     private func install() async throws {
         let fm = FileManager.default
         // An engine from an earlier STEMEKI is completed in place; a new one is built aside and moved in at the end.
@@ -89,12 +118,9 @@ final class EngineInstaller: ObservableObject {
         if !fm.isExecutableFile(atPath: python.path) {
             step = "STEP 1 / 5 · Downloading Python"
             let archive = work.appendingPathComponent("python.tar.gz")
-            try await Downloader.fetch(Engine.pythonURL, to: archive) { [weak self] f, got, total in
+            try await fetchFirst(Engine.pythonURLs, to: archive, sha256: Engine.pythonSHA256, what: "Python") { [weak self] f, got, total in
                 self?.fraction = 0.08 * f
                 self?.detail = Self.megabytes(got, total)
-            }
-            guard try Self.sha256(archive) == Engine.pythonSHA256 else {
-                throw EngineError("The Python download is damaged (checksum mismatch). Please try again.")
             }
             detail = "Unpacking…"
             try await Self.run("/usr/bin/tar", ["-xzf", archive.path, "-C", work.path])
@@ -145,13 +171,9 @@ final class EngineInstaller: ObservableObject {
         let beatModel = checkpoints.appendingPathComponent(Engine.beatModelFile)
         if !fm.fileExists(atPath: beatModel.path) {
             step = "STEP 4 / 5 · Downloading the beat model"
-            try await Downloader.fetch(Engine.beatModelURL, to: beatModel) { [weak self] f, got, total in
+            try await fetchFirst(Engine.beatModelURLs, to: beatModel, sha256: Engine.beatModelSHA256, what: "beat model") { [weak self] f, got, total in
                 self?.fraction = 0.78 + 0.14 * f
                 self?.detail = Self.megabytes(got, total)
-            }
-            guard try Self.sha256(beatModel) == Engine.beatModelSHA256 else {
-                try? fm.removeItem(at: beatModel)
-                throw EngineError("The beat model download is damaged (checksum mismatch). Please try again.")
             }
         }
 
