@@ -6,21 +6,27 @@ import SwiftUI
 /// in ~/Library/Application Support/STEMEKI/Engine, for Macs without a Python of their own.
 enum Engine {
     /// Fallbacks (November 2026: the beat model's original server answered HTTP 500): GitHub → ekidio.hu → original.
-    /// The same files as CHORDEKI's engine, mirrored there; the SHA-256 checks accept only the exact same file.
-    static let mirror = "https://ekidio.hu/download/chordeki/engine/"
+    /// STEMEKI's own mirror on ekidio.hu; the SHA-256 checks accept only the exact same file.
+    static let mirror = "https://ekidio.hu/download/stemeki/engine/"
+    static let github = "https://github.com/Ekidio/stemeki/releases/download/engine-models/"
+    /// The Python packages come from PyPI; if that fails, from the same tested wheels on ekidio.hu.
+    static let wheelsPage = mirror + "wheels/links.html"
     static let pythonFile = "cpython-3.10.16+20250317-aarch64-apple-darwin-install_only.tar.gz"
     static let pythonURLs = [
         URL(string: "https://github.com/astral-sh/python-build-standalone/releases/download/20250317/\(pythonFile)")!,
         URL(string: mirror + pythonFile.replacingOccurrences(of: "+", with: "%2B"))!,
     ]
     static let pythonSHA256 = "e99f8457d9c79592c036489c5cfa78df76e4762d170665e499833e045d82608f"
-    static let modelURL = URL(string: "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th")!
+    static let modelURLs = [
+        URL(string: github + "955717e8-8726e21a.th")!,
+        URL(string: mirror + "955717e8-8726e21a.th")!,
+        URL(string: "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th")!,
+    ]
+    static let modelSHA256 = "8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4"
     static let modelFile = "955717e8-8726e21a.th"
-    /// torch.hub checks the file against this prefix of its SHA-256.
-    static let modelHashPrefix = "8726e21a"
     /// The beat / downbeat model (Beat This!, JKU Linz, MIT), where its own loader looks for it.
     static let beatModelURLs = [
-        URL(string: "https://github.com/Ekidio/chordeki/releases/download/engine-models/beat_this-final0.ckpt")!,
+        URL(string: github + "beat_this-final0.ckpt")!,
         URL(string: mirror + "beat_this-final0.ckpt")!,
         URL(string: "https://cloud.cp.jku.at/public.php/dav/files/7ik4RrBKTS273gp/final0.ckpt")!,
     ]
@@ -138,19 +144,28 @@ final class EngineInstaller: ObservableObject {
         let total = Double((try? String(contentsOf: requirements, encoding: .utf8))?
             .split(separator: "\n").filter { $0.contains("==") }.count ?? 50)
         var collected = 0.0
-        try await Self.run(python.path, ["-m", "pip", "install", "--no-cache-dir", "--prefer-binary",
-                                         "--only-binary=\(Engine.binaryOnly)", "--disable-pip-version-check",
-                                         "--no-warn-script-location", "-r", requirements.path],
-                           env: ["PIP_NO_INPUT": "1"]) { [weak self] line in
-            guard let self else { return }
-            if line.hasPrefix("Collecting ") || line.hasPrefix("Requirement already satisfied") {
-                collected += 1
-                self.detail = line.hasPrefix("Collecting ") ? (String(line.dropFirst(11)).components(separatedBy: " ").first ?? "") : "Checking…"
-                self.fraction = 0.1 + 0.5 * min(1, collected / total)
-            } else if line.hasPrefix("Installing collected packages") {
-                self.detail = "Putting it all together…"
-                self.fraction = 0.62
+        let pip = { (source: [String]) async throws in
+            collected = 0
+            try await Self.run(python.path, ["-m", "pip", "install", "--no-cache-dir", "--prefer-binary",
+                                             "--only-binary=\(Engine.binaryOnly)", "--disable-pip-version-check",
+                                             "--no-warn-script-location"] + source + ["-r", requirements.path],
+                               env: ["PIP_NO_INPUT": "1"]) { [weak self] line in
+                guard let self else { return }
+                if line.hasPrefix("Collecting ") || line.hasPrefix("Requirement already satisfied") {
+                    collected += 1
+                    self.detail = line.hasPrefix("Collecting ") ? (String(line.dropFirst(11)).components(separatedBy: " ").first ?? "") : "Checking…"
+                    self.fraction = 0.1 + 0.5 * min(1, collected / total)
+                } else if line.hasPrefix("Installing collected packages") {
+                    self.detail = "Putting it all together…"
+                    self.fraction = 0.62
+                }
             }
+        }
+        do {
+            try await pip([])                                                   // PyPI
+        } catch {
+            detail = "Trying the EKIDIO mirror…"
+            try await pip(["--no-index", "--find-links", Engine.wheelsPage])   // the same tested wheels on ekidio.hu
         }
 
         // 3. The trained models: separation, then beats.
@@ -159,13 +174,9 @@ final class EngineInstaller: ObservableObject {
         let model = checkpoints.appendingPathComponent(Engine.modelFile)
         if !fm.fileExists(atPath: model.path) {
             step = "STEP 3 / 5 · Downloading the separation model"
-            try await Downloader.fetch(Engine.modelURL, to: model) { [weak self] f, got, total in
+            try await fetchFirst(Engine.modelURLs, to: model, sha256: Engine.modelSHA256, what: "separation model") { [weak self] f, got, total in
                 self?.fraction = 0.64 + 0.14 * f
                 self?.detail = Self.megabytes(got, total)
-            }
-            guard try Self.sha256(model).hasPrefix(Engine.modelHashPrefix) else {
-                try? fm.removeItem(at: model)
-                throw EngineError("The model download is damaged (checksum mismatch). Please try again.")
             }
         }
         let beatModel = checkpoints.appendingPathComponent(Engine.beatModelFile)
